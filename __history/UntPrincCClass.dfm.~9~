@@ -1,0 +1,68 @@
+object Form8: TForm8
+  Left = 0
+  Top = 0
+  Caption = 'DT Demo - Reforma tribut'#225'ria - CST / CClassTrib'
+  ClientHeight = 400
+  ClientWidth = 700
+  Color = clBtnFace
+  Font.Charset = DEFAULT_CHARSET
+  Font.Color = clWindowText
+  Font.Height = -11
+  Font.Name = 'Segoe UI'
+  Font.Style = []
+  OnCreate = FormCreate
+  OnDestroy = FormDestroy
+  TextHeight = 13
+  object lblCST: TLabel
+    Left = 32
+    Top = 24
+    Width = 21
+    Height = 13
+    Caption = 'CST:'
+  end
+  object lblCClassTrib: TLabel
+    Left = 32
+    Top = 88
+    Width = 173
+    Height = 13
+    Caption = 'C'#243'digo de Classifica'#231#227'o Tribut'#225'ria'
+  end
+  object lblDescricao: TLabel
+    Left = 32
+    Top = 152
+    Width = 52
+    Height = 13
+    Caption = 'Descri'#231#227'o:'
+  end
+  object cboCST: TComboBox
+    Left = 32
+    Top = 43
+    Width = 649
+    Height = 22
+    Cursor = crHandPoint
+    Style = csOwnerDrawFixed
+    Color = clInfoBk
+    TabOrder = 0
+    StyleElements = [seFont, seBorder]
+  end
+  object cboCClassTrib: TComboBox
+    Left = 32
+    Top = 107
+    Width = 649
+    Height = 22
+    Cursor = crHandPoint
+    Style = csOwnerDrawFixed
+    Color = clInfoBk
+    TabOrder = 1
+    StyleElements = [seFont, seBorder]
+  end
+  object mLog: TMemo
+    Left = 32
+    Top = 171
+    Width = 649
+    Height = 209
+    ReadOnly = True
+    ScrollBars = ssVertical
+    TabOrder = 2
+  end
+end
