@@ -66,8 +66,6 @@ procedure TCSTClassTribService.CarregarTabelaCSTClassTrib;
 
 begin
   // ADICIONAR O CONTEUDO ATRAVEZ DE UMA TABELA DO SEU BANCO DE DADOS.
-  // ONDE DEVE CONTER 3 COLUNAS
-  // 1 - CST IBS/CBS 2 - CCLASSTRIB - 3 - DESCRICAO DO CCLASSTRIB
 
   // CST 000 - Tributação integral
   AddCSTClassTrib('000', '000001', 'Situações tributadas integralmente pelo IBS e CBS.');

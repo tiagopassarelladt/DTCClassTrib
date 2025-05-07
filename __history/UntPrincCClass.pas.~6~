@@ -86,33 +86,31 @@ var
 begin
   cboCST.Items.Clear;
   cboCST.Text := '';
+
   CSTs := FCSTService.ListarCSTDisponiveis;
+
   for CST in CSTs do
   begin
     case CST.ToInteger of
       0: cboCST.Items.Add(Format('%s - Tributação Normal', [CST]));
-      10: cboCST.Items.Add(Format('%s - Tributação com alíquotas uniformes - operações setor financeiro', [CST]));
-      11: cboCST.Items.Add(Format('%s - Tributação com alíquotas uniformes reduzidas', [CST]));
       200: cboCST.Items.Add(Format('%s - Alíquota Zero', [CST]));
-      210: cboCST.Items.Add(Format('%s - Alíquota reduzida com redutor de base de cálculo', [CST]));
-      220: cboCST.Items.Add(Format('%s - Alíquota fixa', [CST]));
-      221: cboCST.Items.Add(Format('%s - Alíquota fixa proporcional', [CST]));
       400: cboCST.Items.Add(Format('%s - Isenção', [CST]));
-      410: cboCST.Items.Add(Format('%s - Imunidade e não incidência', [CST]));
+      410: cboCST.Items.Add(Format('%s - Não Incidência', [CST]));
       510: cboCST.Items.Add(Format('%s - Diferimento', [CST]));
       550: cboCST.Items.Add(Format('%s - Suspensão', [CST]));
       620: cboCST.Items.Add(Format('%s - Tributação Monofásica', [CST]));
       800: cboCST.Items.Add(Format('%s - Transferência de Créditos', [CST]));
       810: cboCST.Items.Add(Format('%s - Ajustes', [CST]));
-      820: cboCST.Items.Add(Format('%s - Tributação em declaração de regime específico', [CST]));
       900: cboCST.Items.Add(Format('%s - Outros', [CST]));
     else
       cboCST.Items.Add(CST);
     end;
   end;
+
   // Limpar o segundo ComboBox
   cboCClassTrib.Items.Clear;
   cboCClassTrib.Text := '';
+
   // Limpar o Memo
   mLog.Clear;
 end;
