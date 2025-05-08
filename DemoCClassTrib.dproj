@@ -127,7 +127,7 @@
             <Form>Form8</Form>
             <FormType>dfm</FormType>
         </DCCReference>
-        <DCCReference Include="ReformaTributaria.ClassTrib.pas"/>
+        <DCCReference Include="Classes\ReformaTributaria.ClassTrib.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>

@@ -1,0 +1,437 @@
+unit ReformaTributaria.ClassTrib;
+
+interface
+
+uses
+  System.SysUtils,
+  System.Generics.Collections,
+  System.Classes,
+  System.DateUtils;
+
+type
+  TClassTribMetadata = record
+    CST: string;
+    Codigo: string;
+    Descricao: string;
+    ArtigoLei: string;
+    TipoTributacao: string;
+    TomadorEspecifico: string;
+    ExigeNBSouNCM: Boolean;
+    SemNBScomCodServico: Boolean;
+    TributacaoNFSe: string;
+    OutroCampoNFSe: string;
+    Observacao: string;
+    PercentualReducaoAliquota: Double;
+    TributosRelacionados: string;
+    DataInicioVigencia: TDateTime;
+    DataFimVigencia: TDateTime;
+    TituloCapitulo: string;
+    CreditoAnterior: string;
+    CreditoParaFrente: string;
+  end;
+
+  IClassTribRepository = interface
+    ['{BD7A5F1D-8E9C-4A7F-9B2C-F312E940B123}']
+    function GetByCST(const CST: string): TArray<TClassTribMetadata>;
+    function GetByCodigo(const Codigo: string): TClassTribMetadata;
+    function GetAllCSTs: TArray<string>;
+    function ValidateClassTrib(const CST, Codigo: string): Boolean;
+    function GetDescricao(const Codigo: string): string;
+    function GetArtigoLei(const Codigo: string): string;
+    function GetTomadorEspecifico(const Codigo: string): string;
+    function GetObservacao(const Codigo: string): string;
+    function GetPercentualReducao(const Codigo: string): Double;
+    function GetVigencia(const Codigo: string): TDateTime;
+    function IsCodigoAtivo(const Codigo: string): Boolean;
+    function GetByFiltro(const Filtro: string): TArray<TClassTribMetadata>;
+    function ConverterICMSParaIBS(const CSTICMS: string): TClassTribMetadata;
+    function ConverterCSOSNParaIBS(const CSOSN: string): TClassTribMetadata;
+    function ConverterPisCofinsParaCBS(const CSTPisCofins: string): TClassTribMetadata;
+  end;
+
+  TClassTribService = class(TInterfacedObject, IClassTribRepository)
+  private
+    FMetadataMap: TObjectDictionary<string, TList<TClassTribMetadata>>;
+    FMapeamentoICMS: TDictionary<string, string>;
+    FMapeamentoCSOSN: TDictionary<string, string>;
+    FMapeamentoPisCofins: TDictionary<string, string>;
+
+    procedure LoadClassTribData;
+    procedure LoadMapeamentos;
+    procedure AddClassTribMetadata(const Metadata: TClassTribMetadata);
+    function GetMetadataFromList(const List: TList<TClassTribMetadata>;
+      const Index: Integer): TClassTribMetadata;
+  public
+    constructor Create;
+    destructor Destroy; override;
+
+    function GetByCST(const CST: string): TArray<TClassTribMetadata>;
+    function GetByCodigo(const Codigo: string): TClassTribMetadata;
+    function GetAllCSTs: TArray<string>;
+    function ValidateClassTrib(const CST, Codigo: string): Boolean;
+    function GetDescricao(const Codigo: string): string;
+    function GetArtigoLei(const Codigo: string): string;
+    function GetTomadorEspecifico(const Codigo: string): string;
+    function GetObservacao(const Codigo: string): string;
+    function GetPercentualReducao(const Codigo: string): Double;
+    function GetVigencia(const Codigo: string): TDateTime;
+    function IsCodigoAtivo(const Codigo: string): Boolean;
+    function GetByFiltro(const Filtro: string): TArray<TClassTribMetadata>;
+    function ConverterICMSParaIBS(const CSTICMS: string): TClassTribMetadata;
+    function ConverterCSOSNParaIBS(const CSOSN: string): TClassTribMetadata;
+    function ConverterPisCofinsParaCBS(const CSTPisCofins: string): TClassTribMetadata;
+
+    class function CreateDefault: IClassTribRepository;
+  end;
+
+implementation
+
+{ TClassTribService }
+
+constructor TClassTribService.Create;
+begin
+  inherited;
+  FMetadataMap := TObjectDictionary<string, TList<TClassTribMetadata>>.Create([doOwnsValues]);
+  FMapeamentoICMS := TDictionary<string, string>.Create;
+  FMapeamentoCSOSN := TDictionary<string, string>.Create;
+  FMapeamentoPisCofins := TDictionary<string, string>.Create;
+
+  LoadMapeamentos;
+  LoadClassTribData;
+end;
+
+destructor TClassTribService.Destroy;
+begin
+  FMetadataMap.Free;
+  FMapeamentoICMS.Free;
+  FMapeamentoCSOSN.Free;
+  FMapeamentoPisCofins.Free;
+  inherited;
+end;
+
+class function TClassTribService.CreateDefault: IClassTribRepository;
+begin
+  Result := TClassTribService.Create;
+end;
+
+procedure TClassTribService.AddClassTribMetadata(const Metadata: TClassTribMetadata);
+var
+  List: TList<TClassTribMetadata>;
+begin
+  if not FMetadataMap.TryGetValue(Metadata.CST, List) then
+  begin
+    List := TList<TClassTribMetadata>.Create;
+    FMetadataMap.Add(Metadata.CST, List);
+  end;
+  List.Add(Metadata);
+end;
+
+function TClassTribService.GetByCST(const CST: string): TArray<TClassTribMetadata>;
+var
+  List: TList<TClassTribMetadata>;
+begin
+  if FMetadataMap.TryGetValue(CST, List) then
+    Result := List.ToArray
+  else
+    SetLength(Result, 0);
+end;
+
+function TClassTribService.GetByCodigo(const Codigo: string): TClassTribMetadata;
+var
+  List: TList<TClassTribMetadata>;
+  Item: TClassTribMetadata;
+begin
+  Result := Default(TClassTribMetadata);
+
+  for List in FMetadataMap.Values do
+  begin
+    for Item in List do
+    begin
+      if Item.Codigo = Codigo then
+        Exit(Item);
+    end;
+  end;
+end;
+
+function TClassTribService.GetAllCSTs: TArray<string>;
+begin
+  Result := FMetadataMap.Keys.ToArray;
+end;
+
+function TClassTribService.ValidateClassTrib(const CST, Codigo: string): Boolean;
+var
+  List: TList<TClassTribMetadata>;
+  Item: TClassTribMetadata;
+begin
+  Result := False;
+
+  if FMetadataMap.TryGetValue(CST, List) then
+  begin
+    for Item in List do
+    begin
+      if (Item.Codigo = Codigo) and IsCodigoAtivo(Codigo) then
+        Exit(True);
+    end;
+  end;
+end;
+
+function TClassTribService.GetDescricao(const Codigo: string): string;
+var
+  Metadata: TClassTribMetadata;
+begin
+  Metadata := GetByCodigo(Codigo);
+  Result := Metadata.Descricao;
+end;
+
+function TClassTribService.GetMetadataFromList(const List: TList<TClassTribMetadata>;
+  const Index: Integer): TClassTribMetadata;
+begin
+  Result := Default(TClassTribMetadata);
+
+  if (List = nil) or (Index < 0) or (Index >= List.Count) then
+    Exit;
+
+  Result := List[Index];
+end;
+
+function TClassTribService.GetArtigoLei(const Codigo: string): string;
+var
+  Metadata: TClassTribMetadata;
+begin
+  Metadata := GetByCodigo(Codigo);
+  Result := Metadata.ArtigoLei;
+end;
+
+function TClassTribService.GetTomadorEspecifico(const Codigo: string): string;
+var
+  Metadata: TClassTribMetadata;
+begin
+  Metadata := GetByCodigo(Codigo);
+  Result := Metadata.TomadorEspecifico;
+end;
+
+function TClassTribService.GetObservacao(const Codigo: string): string;
+var
+  Metadata: TClassTribMetadata;
+begin
+  Metadata := GetByCodigo(Codigo);
+  Result := Metadata.Observacao;
+end;
+
+function TClassTribService.GetPercentualReducao(const Codigo: string): Double;
+var
+  Metadata: TClassTribMetadata;
+begin
+  Metadata := GetByCodigo(Codigo);
+  Result := Metadata.PercentualReducaoAliquota;
+end;
+
+function TClassTribService.GetVigencia(const Codigo: string): TDateTime;
+var
+  Metadata: TClassTribMetadata;
+begin
+  Metadata := GetByCodigo(Codigo);
+  Result := Metadata.DataInicioVigencia;
+end;
+
+function TClassTribService.IsCodigoAtivo(const Codigo: string): Boolean;
+var
+  Metadata: TClassTribMetadata;
+begin
+  Metadata := GetByCodigo(Codigo);
+  Result := (Metadata.DataFimVigencia = 0) or
+            (Date <= Metadata.DataFimVigencia);
+end;
+
+function TClassTribService.GetByFiltro(const Filtro: string): TArray<TClassTribMetadata>;
+var
+  List: TList<TClassTribMetadata>;
+  Item: TClassTribMetadata;
+  ResultList: TList<TClassTribMetadata>;
+begin
+  ResultList := TList<TClassTribMetadata>.Create;
+  try
+    for List in FMetadataMap.Values do
+    begin
+      for Item in List do
+      begin
+        if (Pos(UpperCase(Filtro), UpperCase(Item.Descricao)) > 0) or
+           (Pos(UpperCase(Filtro), UpperCase(Item.ArtigoLei)) > 0) or
+           (Pos(UpperCase(Filtro), UpperCase(Item.TituloCapitulo)) > 0) then
+        begin
+          ResultList.Add(Item);
+        end;
+      end;
+    end;
+    Result := ResultList.ToArray;
+  finally
+    ResultList.Free;
+  end;
+end;
+
+function TClassTribService.ConverterICMSParaIBS(const CSTICMS: string): TClassTribMetadata;
+var
+  CClassTrib: string;
+begin
+  Result := Default(TClassTribMetadata);
+
+  // Verifica se o código ICMS existe no mapeamento
+  if FMapeamentoICMS.TryGetValue(CSTICMS, CClassTrib) then
+    Result := GetByCodigo(CClassTrib);
+
+  // Se não encontrou, tenta criar uma instância mais genérica baseada no CST
+  if Result.Codigo = '' then
+  begin
+    // Conversão direta do CST ICMS para CST IBS
+    case StrToIntDef(CSTICMS, -1) of
+      0:  CClassTrib := '000001'; // Tributada integralmente
+      10: CClassTrib := '620001'; // Tributada com ST
+      20: CClassTrib := '210001'; // Com redução da BC
+      30: CClassTrib := '620002'; // Isenta com ST
+      40: CClassTrib := '400001'; // Isenta
+      41: CClassTrib := '410001'; // Não tributada
+      50: CClassTrib := '550001'; // Suspensão
+      51: CClassTrib := '510001'; // Diferimento
+      60: CClassTrib := '620005'; // ICMS cobrado anteriormente por ST
+      70: CClassTrib := '620002'; // Redução da BC com ST
+      90: CClassTrib := '900001'; // Outras
+    else
+      CClassTrib := '900001'; // Outro/Não identificado
+    end;
+
+    Result := GetByCodigo(CClassTrib);
+  end;
+end;
+
+function TClassTribService.ConverterCSOSNParaIBS(const CSOSN: string): TClassTribMetadata;
+var
+  CClassTrib: string;
+begin
+  Result := Default(TClassTribMetadata);
+
+  // Verifica se o código CSOSN existe no mapeamento
+  if FMapeamentoCSOSN.TryGetValue(CSOSN, CClassTrib) then
+    Result := GetByCodigo(CClassTrib);
+
+  // Se não encontrou, tenta criar uma instância mais genérica baseada no CSOSN
+  if Result.Codigo = '' then
+  begin
+    // Conversão direta do CSOSN para CST IBS
+    case StrToIntDef(CSOSN, -1) of
+      101, 102: CClassTrib := '000001'; // Tributada pelo Simples
+      103:      CClassTrib := '400001'; // Isenção no Simples
+      201..203: CClassTrib := '620002'; // Com ST no Simples
+      300:      CClassTrib := '410001'; // Imune
+      400:      CClassTrib := '410001'; // Não tributada
+      500:      CClassTrib := '620001'; // ICMS cobrado por ST
+      900:      CClassTrib := '900001'; // Outros
+    else
+      CClassTrib := '900001'; // Outro/Não identificado
+    end;
+
+    Result := GetByCodigo(CClassTrib);
+  end;
+end;
+
+function TClassTribService.ConverterPisCofinsParaCBS(const CSTPisCofins: string): TClassTribMetadata;
+var
+  CClassTrib: string;
+begin
+  Result := Default(TClassTribMetadata);
+
+  // Verifica se o código PIS/COFINS existe no mapeamento
+  if FMapeamentoPisCofins.TryGetValue(CSTPisCofins, CClassTrib) then
+    Result := GetByCodigo(CClassTrib);
+
+  // Se não encontrou, tenta criar uma instância mais genérica baseada no CST
+  if Result.Codigo = '' then
+  begin
+    // Conversão direta do CST PIS/COFINS para CST CBS
+    case StrToIntDef(CSTPisCofins, -1) of
+      1:       CClassTrib := '000001'; // Alíquota Básica
+      2:       CClassTrib := '011001'; // Alíquota Diferenciada
+      3:       CClassTrib := '620001'; // Alíquota por Unidade
+      4:       CClassTrib := '620005'; // Monofásica - Revenda Zero
+      5:       CClassTrib := '620002'; // Substituição Tributária
+      6:       CClassTrib := '200001'; // Alíquota Zero
+      7:       CClassTrib := '400001'; // Isenta
+      8:       CClassTrib := '410001'; // Sem Incidência
+      9:       CClassTrib := '550001'; // Suspensão
+      49:      CClassTrib := '900001'; // Outras Saídas
+      50..66:  CClassTrib := '000001'; // Operações com crédito
+      70..75:  CClassTrib := '410001'; // Operações sem crédito
+      98:      CClassTrib := '900001'; // Outras entradas
+      99:      CClassTrib := '900001'; // Outras
+    else
+      CClassTrib := '900001'; // Outro/Não identificado
+    end;
+
+    Result := GetByCodigo(CClassTrib);
+  end;
+end;
+
+procedure TClassTribService.LoadMapeamentos;
+begin
+  // Mapeamento CST ICMS -> CClassTrib
+  FMapeamentoICMS.Add('00', '000001');
+  FMapeamentoICMS.Add('10', '620001');
+  FMapeamentoICMS.Add('20', '210001');
+  FMapeamentoICMS.Add('30', '620003');
+  FMapeamentoICMS.Add('40', '400001');
+  FMapeamentoICMS.Add('41', '410001');
+  FMapeamentoICMS.Add('50', '550001');
+  FMapeamentoICMS.Add('51', '510001');
+  FMapeamentoICMS.Add('60', '620005');
+  FMapeamentoICMS.Add('70', '620002');
+  FMapeamentoICMS.Add('90', '900001');
+
+  // Mapeamento CSOSN -> CClassTrib
+  FMapeamentoCSOSN.Add('101', '000001');
+  FMapeamentoCSOSN.Add('102', '000001');
+  FMapeamentoCSOSN.Add('103', '400001');
+  FMapeamentoCSOSN.Add('201', '620002');
+  FMapeamentoCSOSN.Add('202', '620002');
+  FMapeamentoCSOSN.Add('203', '620003');
+  FMapeamentoCSOSN.Add('300', '410005');
+  FMapeamentoCSOSN.Add('400', '410001');
+  FMapeamentoCSOSN.Add('500', '620005');
+  FMapeamentoCSOSN.Add('900', '900001');
+
+  // Mapeamento CST PIS/COFINS -> CClassTrib
+  FMapeamentoPisCofins.Add('01', '000001');
+  FMapeamentoPisCofins.Add('02', '011001');
+  FMapeamentoPisCofins.Add('03', '620001');
+  FMapeamentoPisCofins.Add('04', '620005');
+  FMapeamentoPisCofins.Add('05', '620002');
+  FMapeamentoPisCofins.Add('06', '200001');
+  FMapeamentoPisCofins.Add('07', '400001');
+  FMapeamentoPisCofins.Add('08', '410001');
+  FMapeamentoPisCofins.Add('09', '550001');
+  FMapeamentoPisCofins.Add('49', '900001');
+  FMapeamentoPisCofins.Add('50', '000001');
+  FMapeamentoPisCofins.Add('51', '000001');
+  FMapeamentoPisCofins.Add('52', '000001');
+  FMapeamentoPisCofins.Add('53', '000001');
+  FMapeamentoPisCofins.Add('54', '000001');
+  FMapeamentoPisCofins.Add('55', '000001');
+  FMapeamentoPisCofins.Add('56', '000001');
+  FMapeamentoPisCofins.Add('60', '410001');
+  FMapeamentoPisCofins.Add('70', '410001');
+  FMapeamentoPisCofins.Add('71', '410001');
+  FMapeamentoPisCofins.Add('72', '410001');
+  FMapeamentoPisCofins.Add('73', '410001');
+  FMapeamentoPisCofins.Add('74', '410001');
+  FMapeamentoPisCofins.Add('75', '410001');
+  FMapeamentoPisCofins.Add('98', '900001');
+  FMapeamentoPisCofins.Add('99', '900001');
+end;
+
+procedure TClassTribService.LoadClassTribData;
+var
+  Metadata: TClassTribMetadata;
+begin
+
+
+end;
+
+end.

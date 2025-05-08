@@ -2,9 +2,9 @@ object Form8: TForm8
   Left = 0
   Top = 0
   BorderIcons = [biSystemMenu]
-  Caption = 'DT Demo - Reforma tribut'#225'ria - CST / CClassTrib'
-  ClientHeight = 349
-  ClientWidth = 668
+  Caption = 'DT Demo - Reforma tribut'#225'ria'
+  ClientHeight = 630
+  ClientWidth = 677
   Color = clBtnFace
   Font.Charset = DEFAULT_CHARSET
   Font.Color = clWindowText
@@ -15,64 +15,350 @@ object Form8: TForm8
   OnCreate = FormCreate
   OnDestroy = FormDestroy
   TextHeight = 13
-  object lblCST: TLabel
-    Left = 9
-    Top = 10
-    Width = 21
-    Height = 13
-    Caption = 'CST:'
-  end
-  object lblCClassTrib: TLabel
-    Left = 9
-    Top = 59
-    Width = 173
-    Height = 13
-    Caption = 'C'#243'digo de Classifica'#231#227'o Tribut'#225'ria'
-  end
-  object lblDescricao: TLabel
-    Left = 9
-    Top = 109
-    Width = 52
-    Height = 13
-    Caption = 'Descri'#231#227'o:'
-  end
-  object cboCST: TComboBox
-    Left = 9
-    Top = 29
-    Width = 649
-    Height = 22
+  object PageControl1: TPageControl
+    Left = 5
+    Top = 5
+    Width = 673
+    Height = 617
     Cursor = crHandPoint
-    Style = csOwnerDrawFixed
-    Color = clInfoBk
+    ActivePage = TabSheet1
+    Style = tsButtons
     TabOrder = 0
     StyleElements = [seFont, seBorder]
-    OnChange = cboCSTChange
-  end
-  object cboCClassTrib: TComboBox
-    Left = 9
-    Top = 78
-    Width = 649
-    Height = 22
-    Cursor = crHandPoint
-    Style = csOwnerDrawFixed
-    Color = clInfoBk
-    TabOrder = 1
-    StyleElements = [seFont, seBorder]
-  end
-  object mLog: TMemo
-    Left = 9
-    Top = 128
-    Width = 649
-    Height = 209
-    Color = 5460819
-    Font.Charset = ANSI_CHARSET
-    Font.Color = clWhite
-    Font.Height = -12
-    Font.Name = 'Courier New'
-    Font.Style = []
-    ParentFont = False
-    ReadOnly = True
-    ScrollBars = ssVertical
-    TabOrder = 2
+    object TabSheet1: TTabSheet
+      Caption = 'CClassTrib'
+      object lblCST: TLabel
+        Left = 9
+        Top = 7
+        Width = 89
+        Height = 13
+        Caption = 'CST IBS / CBS / IS:'
+      end
+      object lblCClassTrib: TLabel
+        Left = 9
+        Top = 56
+        Width = 234
+        Height = 13
+        Caption = 'CClassTrib - C'#243'digo de Classifica'#231#227'o Tribut'#225'ria'
+      end
+      object lblDescricao: TLabel
+        Left = 8
+        Top = 270
+        Width = 52
+        Height = 13
+        Caption = 'Descri'#231#227'o:'
+      end
+      object Label1: TLabel
+        Left = 8
+        Top = 131
+        Width = 41
+        Height = 13
+        Caption = 'C'#243'digo:'
+      end
+      object Label2: TLabel
+        Left = 127
+        Top = 131
+        Width = 21
+        Height = 13
+        Caption = 'CST:'
+      end
+      object Label3: TLabel
+        Left = 339
+        Top = 132
+        Width = 52
+        Height = 13
+        Caption = 'Artigo Lei:'
+      end
+      object Label4: TLabel
+        Left = 8
+        Top = 178
+        Width = 81
+        Height = 13
+        Caption = 'Tipo Tributa'#231#227'o:'
+      end
+      object Label5: TLabel
+        Left = 339
+        Top = 178
+        Width = 101
+        Height = 13
+        Caption = 'Tomador Espec'#237'fico:'
+      end
+      object Label6: TLabel
+        Left = 8
+        Top = 224
+        Width = 152
+        Height = 13
+        Caption = 'Percentual Redu'#231#227'o Al'#237'quota:'
+      end
+      object Label7: TLabel
+        Left = 339
+        Top = 224
+        Width = 105
+        Height = 13
+        Caption = 'Data In'#237'cio Vig'#234'ncia:'
+      end
+      object Label8: TLabel
+        Left = 504
+        Top = 224
+        Width = 95
+        Height = 13
+        Caption = 'Data Fim Vig'#234'ncia:'
+      end
+      object cboCST: TComboBox
+        Left = 9
+        Top = 26
+        Width = 649
+        Height = 25
+        Cursor = crHandPoint
+        Style = csDropDownList
+        Color = clInfoBk
+        Font.Charset = DEFAULT_CHARSET
+        Font.Color = clWindowText
+        Font.Height = -13
+        Font.Name = 'Segoe UI'
+        Font.Style = []
+        ParentFont = False
+        TabOrder = 0
+        StyleElements = [seFont, seBorder]
+        OnChange = cboCSTChange
+      end
+      object cboCClassTrib: TComboBox
+        Left = 9
+        Top = 75
+        Width = 649
+        Height = 25
+        Cursor = crHandPoint
+        Style = csDropDownList
+        Color = clInfoBk
+        Font.Charset = DEFAULT_CHARSET
+        Font.Color = clWindowText
+        Font.Height = -13
+        Font.Name = 'Segoe UI'
+        Font.Style = []
+        ParentFont = False
+        TabOrder = 1
+        StyleElements = [seFont, seBorder]
+      end
+      object mLog: TMemo
+        Left = 8
+        Top = 289
+        Width = 650
+        Height = 296
+        Color = 5460819
+        Font.Charset = ANSI_CHARSET
+        Font.Color = clWhite
+        Font.Height = -13
+        Font.Name = 'Courier New'
+        Font.Style = []
+        ParentFont = False
+        ReadOnly = True
+        ScrollBars = ssVertical
+        TabOrder = 2
+      end
+      object edtCodigo: TEdit
+        Left = 8
+        Top = 151
+        Width = 113
+        Height = 21
+        TabOrder = 3
+      end
+      object edtCST: TEdit
+        Left = 127
+        Top = 151
+        Width = 206
+        Height = 21
+        TabOrder = 4
+      end
+      object edtArtigoLei: TEdit
+        Left = 339
+        Top = 151
+        Width = 319
+        Height = 21
+        TabOrder = 5
+      end
+      object edtTipoTributacao: TEdit
+        Left = 8
+        Top = 197
+        Width = 325
+        Height = 21
+        TabOrder = 6
+      end
+      object edtTomador: TEdit
+        Left = 339
+        Top = 197
+        Width = 319
+        Height = 21
+        TabOrder = 7
+      end
+      object edtPercentual: TEdit
+        Left = 8
+        Top = 243
+        Width = 325
+        Height = 21
+        TabOrder = 8
+      end
+      object edtInicioVig: TEdit
+        Left = 339
+        Top = 243
+        Width = 159
+        Height = 21
+        TabOrder = 9
+      end
+      object edtFimVig: TEdit
+        Left = 504
+        Top = 243
+        Width = 154
+        Height = 21
+        TabOrder = 10
+      end
+      object Panel1: TPanel
+        Left = 9
+        Top = 106
+        Width = 649
+        Height = 21
+        BevelInner = bvLowered
+        Caption = 'Detalhamento do CClassTrib'
+        TabOrder = 11
+      end
+    end
+    object TabSheet2: TTabSheet
+      Caption = 'Correla'#231#227'o das CSTs Atuais para as IBS / CBS'
+      ImageIndex = 1
+      object Label9: TLabel
+        Left = 4
+        Top = -1
+        Width = 50
+        Height = 13
+        Caption = 'CST ICMS:'
+      end
+      object Label10: TLabel
+        Left = 4
+        Top = 167
+        Width = 39
+        Height = 13
+        Caption = 'CSOSN:'
+      end
+      object Label11: TLabel
+        Left = 4
+        Top = 339
+        Width = 78
+        Height = 13
+        Caption = 'CST Pis / Cofins'
+      end
+      object cboICMS: TComboBox
+        Left = 3
+        Top = 16
+        Width = 649
+        Height = 25
+        Cursor = crHandPoint
+        Style = csDropDownList
+        Color = clInfoBk
+        Font.Charset = DEFAULT_CHARSET
+        Font.Color = clWindowText
+        Font.Height = -13
+        Font.Name = 'Segoe UI'
+        Font.Style = []
+        ParentFont = False
+        TabOrder = 0
+        StyleElements = [seFont, seBorder]
+        OnClick = cboICMSClick
+      end
+      object cboCSOSN: TComboBox
+        Left = 3
+        Top = 186
+        Width = 649
+        Height = 25
+        Cursor = crHandPoint
+        Style = csDropDownList
+        Color = clInfoBk
+        Font.Charset = DEFAULT_CHARSET
+        Font.Color = clWindowText
+        Font.Height = -13
+        Font.Name = 'Segoe UI'
+        Font.Style = []
+        ParentFont = False
+        TabOrder = 1
+        StyleElements = [seFont, seBorder]
+        OnClick = cboICMSClick
+      end
+      object cboPISCOFINS: TComboBox
+        Left = 3
+        Top = 359
+        Width = 649
+        Height = 25
+        Cursor = crHandPoint
+        Style = csDropDownList
+        Color = clInfoBk
+        Font.Charset = DEFAULT_CHARSET
+        Font.Color = clWindowText
+        Font.Height = -13
+        Font.Name = 'Segoe UI'
+        Font.Style = []
+        ParentFont = False
+        TabOrder = 2
+        StyleElements = [seFont, seBorder]
+        OnClick = cboICMSClick
+      end
+      object Panel2: TPanel
+        Left = 3
+        Top = 42
+        Width = 649
+        Height = 110
+        BevelInner = bvLowered
+        TabOrder = 3
+        object lblICMSResultado: TLabel
+          Left = 2
+          Top = 2
+          Width = 645
+          Height = 106
+          Align = alClient
+          AutoSize = False
+          WordWrap = True
+          ExplicitLeft = 0
+          ExplicitTop = 0
+          ExplicitWidth = 649
+          ExplicitHeight = 110
+        end
+      end
+      object Panel3: TPanel
+        Left = 3
+        Top = 212
+        Width = 649
+        Height = 110
+        BevelInner = bvLowered
+        TabOrder = 4
+        object lblCSOSNResultado: TLabel
+          Left = 2
+          Top = 2
+          Width = 645
+          Height = 106
+          Align = alClient
+          AutoSize = False
+          WordWrap = True
+          ExplicitTop = 50
+        end
+      end
+      object Panel4: TPanel
+        Left = 3
+        Top = 385
+        Width = 649
+        Height = 110
+        BevelInner = bvLowered
+        TabOrder = 5
+        object lblPISResultado: TLabel
+          Left = 2
+          Top = 2
+          Width = 645
+          Height = 106
+          Align = alClient
+          AutoSize = False
+          WordWrap = True
+          ExplicitLeft = 0
+          ExplicitTop = 0
+          ExplicitWidth = 649
+          ExplicitHeight = 110
+        end
+      end
+    end
   end
 end

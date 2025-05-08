@@ -1,0 +1,3129 @@
+﻿unit ReformaTributaria.ClassTrib;
+
+interface
+
+uses
+  System.SysUtils,
+  System.Generics.Collections,
+  System.Classes,
+  System.DateUtils;
+
+type
+  TClassTribMetadata = record
+    CST: string;
+    Codigo: string;
+    Descricao: string;
+    ArtigoLei: string;
+    TipoTributacao: string;
+    TomadorEspecifico: string;
+    ExigeNBSouNCM: Boolean;
+    SemNBScomCodServico: Boolean;
+    TributacaoNFSe: string;
+    OutroCampoNFSe: string;
+    Observacao: string;
+    PercentualReducaoAliquota: Double;
+    TributosRelacionados: string;
+    DataInicioVigencia: TDateTime;
+    DataFimVigencia: TDateTime;
+    TituloCapitulo: string;
+    CreditoAnterior: string;
+    CreditoParaFrente: string;
+  end;
+
+  type
+  TTipoCST = (tpmodCST, tpmodCSOSN, tpmodCSTPisCofins);
+
+  TConversionResult = record
+    CSTResult: string;
+    Codigo: string;
+    Descricao: string;
+    Metadata: TClassTribMetadata;
+  end;
+
+  IClassTribRepository = interface
+    ['{BD7A5F1D-8E9C-4A7F-9B2C-F312E940B123}']
+    function GetByCST(const CST: string): TArray<TClassTribMetadata>;
+    function GetByCodigo(const Codigo: string): TClassTribMetadata;
+    function GetAllCSTs: TArray<string>;
+    function ValidateClassTrib(const CST, Codigo: string): Boolean;
+    function GetDescricao(const Codigo: string): string;
+    function GetArtigoLei(const Codigo: string): string;
+    function GetTomadorEspecifico(const Codigo: string): string;
+    function GetObservacao(const Codigo: string): string;
+    function GetPercentualReducao(const Codigo: string): Double;
+    function GetVigencia(const Codigo: string): TDateTime;
+    function IsCodigoAtivo(const Codigo: string): Boolean;
+    function GetByFiltro(const Filtro: string): TArray<TClassTribMetadata>;
+    function ConverterICMSParaIBS(const CSTICMS: string): TClassTribMetadata;
+    function ConverterCSOSNParaIBS(const CSOSN: string): TClassTribMetadata;
+    function ConverterPisCofinsParaCBS(const CSTPisCofins: string): TClassTribMetadata;
+    function ObterDadosConversaoIBS(const TipoCST: TTipoCST; const CodigoCST: string): TConversionResult;
+  end;
+
+  TClassTribService = class(TInterfacedObject, IClassTribRepository)
+  private
+    FMetadataMap: TObjectDictionary<string, TList<TClassTribMetadata>>;
+    FMapeamentoICMS: TDictionary<string, string>;
+    FMapeamentoCSOSN: TDictionary<string, string>;
+    FMapeamentoPisCofins: TDictionary<string, string>;
+
+    procedure LoadClassTribData;
+    procedure LoadMapeamentos;
+    procedure AddClassTribMetadata(const Metadata: TClassTribMetadata);
+    function GetMetadataFromList(const List: TList<TClassTribMetadata>;
+      const Index: Integer): TClassTribMetadata;
+  public
+    constructor Create;
+    destructor Destroy; override;
+
+    function GetByCST(const CST: string): TArray<TClassTribMetadata>;
+    function GetByCodigo(const Codigo: string): TClassTribMetadata;
+    function GetAllCSTs: TArray<string>;
+    function ValidateClassTrib(const CST, Codigo: string): Boolean;
+    function GetDescricao(const Codigo: string): string;
+    function GetArtigoLei(const Codigo: string): string;
+    function GetTomadorEspecifico(const Codigo: string): string;
+    function GetObservacao(const Codigo: string): string;
+    function GetPercentualReducao(const Codigo: string): Double;
+    function GetVigencia(const Codigo: string): TDateTime;
+    function IsCodigoAtivo(const Codigo: string): Boolean;
+    function GetByFiltro(const Filtro: string): TArray<TClassTribMetadata>;
+    function ConverterICMSParaIBS(const CSTICMS: string): TClassTribMetadata;
+    function ConverterCSOSNParaIBS(const CSOSN: string): TClassTribMetadata;
+    function ConverterPisCofinsParaCBS(const CSTPisCofins: string): TClassTribMetadata;
+    function ObterDadosConversaoIBS(const TipoCST: TTipoCST; const CodigoCST: string): TConversionResult;
+
+    class function CreateDefault: IClassTribRepository;
+  end;
+
+implementation
+
+{ TClassTribService }
+
+constructor TClassTribService.Create;
+begin
+  inherited;
+  FMetadataMap := TObjectDictionary<string, TList<TClassTribMetadata>>.Create([doOwnsValues]);
+  FMapeamentoICMS := TDictionary<string, string>.Create;
+  FMapeamentoCSOSN := TDictionary<string, string>.Create;
+  FMapeamentoPisCofins := TDictionary<string, string>.Create;
+
+  LoadMapeamentos;
+  LoadClassTribData;
+end;
+
+destructor TClassTribService.Destroy;
+begin
+  FMetadataMap.Free;
+  FMapeamentoICMS.Free;
+  FMapeamentoCSOSN.Free;
+  FMapeamentoPisCofins.Free;
+  inherited;
+end;
+
+class function TClassTribService.CreateDefault: IClassTribRepository;
+begin
+  Result := TClassTribService.Create;
+end;
+
+procedure TClassTribService.AddClassTribMetadata(const Metadata: TClassTribMetadata);
+var
+  List: TList<TClassTribMetadata>;
+begin
+  if not FMetadataMap.TryGetValue(Metadata.CST, List) then
+  begin
+    List := TList<TClassTribMetadata>.Create;
+    FMetadataMap.Add(Metadata.CST, List);
+  end;
+  List.Add(Metadata);
+end;
+
+function TClassTribService.GetByCST(const CST: string): TArray<TClassTribMetadata>;
+var
+  List: TList<TClassTribMetadata>;
+begin
+  if FMetadataMap.TryGetValue(CST, List) then
+    Result := List.ToArray
+  else
+    SetLength(Result, 0);
+end;
+
+function TClassTribService.GetByCodigo(const Codigo: string): TClassTribMetadata;
+var
+  List: TList<TClassTribMetadata>;
+  Item: TClassTribMetadata;
+begin
+  Result := Default(TClassTribMetadata);
+
+  for List in FMetadataMap.Values do
+  begin
+    for Item in List do
+    begin
+      if Item.Codigo = Codigo then
+        Exit(Item);
+    end;
+  end;
+end;
+
+function TClassTribService.GetAllCSTs: TArray<string>;
+begin
+  Result := FMetadataMap.Keys.ToArray;
+end;
+
+function TClassTribService.ValidateClassTrib(const CST, Codigo: string): Boolean;
+var
+  List: TList<TClassTribMetadata>;
+  Item: TClassTribMetadata;
+begin
+  Result := False;
+
+  if FMetadataMap.TryGetValue(CST, List) then
+  begin
+    for Item in List do
+    begin
+      if (Item.Codigo = Codigo) and IsCodigoAtivo(Codigo) then
+        Exit(True);
+    end;
+  end;
+end;
+
+function TClassTribService.GetDescricao(const Codigo: string): string;
+var
+  Metadata: TClassTribMetadata;
+begin
+  Metadata := GetByCodigo(Codigo);
+  Result := Metadata.Descricao;
+end;
+
+function TClassTribService.GetMetadataFromList(const List: TList<TClassTribMetadata>;
+  const Index: Integer): TClassTribMetadata;
+begin
+  Result := Default(TClassTribMetadata);
+
+  if (List = nil) or (Index < 0) or (Index >= List.Count) then
+    Exit;
+
+  Result := List[Index];
+end;
+
+function TClassTribService.GetArtigoLei(const Codigo: string): string;
+var
+  Metadata: TClassTribMetadata;
+begin
+  Metadata := GetByCodigo(Codigo);
+  Result := Metadata.ArtigoLei;
+end;
+
+function TClassTribService.GetTomadorEspecifico(const Codigo: string): string;
+var
+  Metadata: TClassTribMetadata;
+begin
+  Metadata := GetByCodigo(Codigo);
+  Result := Metadata.TomadorEspecifico;
+end;
+
+function TClassTribService.GetObservacao(const Codigo: string): string;
+var
+  Metadata: TClassTribMetadata;
+begin
+  Metadata := GetByCodigo(Codigo);
+  Result := Metadata.Observacao;
+end;
+
+function TClassTribService.GetPercentualReducao(const Codigo: string): Double;
+var
+  Metadata: TClassTribMetadata;
+begin
+  Metadata := GetByCodigo(Codigo);
+  Result := Metadata.PercentualReducaoAliquota;
+end;
+
+function TClassTribService.GetVigencia(const Codigo: string): TDateTime;
+var
+  Metadata: TClassTribMetadata;
+begin
+  Metadata := GetByCodigo(Codigo);
+  Result := Metadata.DataInicioVigencia;
+end;
+
+function TClassTribService.IsCodigoAtivo(const Codigo: string): Boolean;
+var
+  Metadata: TClassTribMetadata;
+begin
+  Metadata := GetByCodigo(Codigo);
+  Result := (Metadata.DataFimVigencia = 0) or
+            (Date <= Metadata.DataFimVigencia);
+end;
+
+function TClassTribService.GetByFiltro(const Filtro: string): TArray<TClassTribMetadata>;
+var
+  List: TList<TClassTribMetadata>;
+  Item: TClassTribMetadata;
+  ResultList: TList<TClassTribMetadata>;
+begin
+  ResultList := TList<TClassTribMetadata>.Create;
+  try
+    for List in FMetadataMap.Values do
+    begin
+      for Item in List do
+      begin
+        if (Pos(UpperCase(Filtro), UpperCase(Item.Descricao)) > 0) or
+           (Pos(UpperCase(Filtro), UpperCase(Item.ArtigoLei)) > 0) or
+           (Pos(UpperCase(Filtro), UpperCase(Item.TituloCapitulo)) > 0) then
+        begin
+          ResultList.Add(Item);
+        end;
+      end;
+    end;
+    Result := ResultList.ToArray;
+  finally
+    ResultList.Free;
+  end;
+end;
+
+function TClassTribService.ConverterICMSParaIBS(const CSTICMS: string): TClassTribMetadata;
+var
+  CClassTrib: string;
+  CSTNormalizado: string;
+begin
+  Result := Default(TClassTribMetadata);
+
+  // Normaliza CST removendo zeros à esquerda para pesquisa
+  CSTNormalizado := CSTICMS.TrimLeft(['0']);
+  if CSTNormalizado = '' then
+    CSTNormalizado := '0';
+
+  // Verifica se o código ICMS existe no mapeamento
+  if FMapeamentoICMS.TryGetValue(CSTNormalizado, CClassTrib) then
+    Result := GetByCodigo(CClassTrib);
+
+  // Se não encontrou, tenta criar uma instância mais genérica baseada no CST
+  if Result.Codigo = '' then
+  begin
+    // Conversão direta do CST ICMS para CST IBS
+    case StrToIntDef(CSTNormalizado, -1) of
+      0:  CClassTrib := '000001'; // Tributada integralmente
+      10: CClassTrib := '620001'; // Tributada com ST
+      20: CClassTrib := '210001'; // Com redução da BC
+      30: CClassTrib := '620002'; // Isenta com ST
+      40: CClassTrib := '400001'; // Isenta
+      41: CClassTrib := '410001'; // Não tributada
+      50: CClassTrib := '550001'; // Suspensão
+      51: CClassTrib := '510001'; // Diferimento
+      60: CClassTrib := '620005'; // ICMS cobrado anteriormente por ST
+      70: CClassTrib := '620002'; // Redução da BC com ST
+      90: CClassTrib := '900001'; // Outras
+    else
+      CClassTrib := '900001'; // Outro/Não identificado
+    end;
+
+    Result := GetByCodigo(CClassTrib);
+  end;
+end;
+
+function TClassTribService.ConverterCSOSNParaIBS(const CSOSN: string): TClassTribMetadata;
+var
+  CClassTrib: string;
+  CSONNormalizado: string;
+begin
+  Result := Default(TClassTribMetadata);
+
+  // Normaliza CSOSN removendo zeros à esquerda para pesquisa
+  CSONNormalizado := CSOSN.TrimLeft(['0']);
+  if CSONNormalizado = '' then
+    CSONNormalizado := '0';
+
+  // Verifica se o código CSOSN existe no mapeamento
+  if FMapeamentoCSOSN.TryGetValue(CSONNormalizado, CClassTrib) then
+    Result := GetByCodigo(CClassTrib);
+
+  // Se não encontrou, tenta criar uma instância mais genérica baseada no CSOSN
+  if Result.Codigo = '' then
+  begin
+    // Conversão baseada em faixas de CSOSN para melhor manutenção
+    case StrToIntDef(CSONNormalizado, -1) of
+      101, 102:     CClassTrib := '000001'; // Tributada pelo Simples
+      103:          CClassTrib := '400001'; // Isenção no Simples
+      201, 202, 203:CClassTrib := '620002'; // Com ST no Simples
+      300:          CClassTrib := '410001'; // Imune
+      400:          CClassTrib := '410001'; // Não tributada
+      500:          CClassTrib := '620001'; // ICMS cobrado por ST
+      900:          CClassTrib := '900001'; // Outros
+    else
+      CClassTrib := '900001'; // Outro/Não identificado
+    end;
+
+    Result := GetByCodigo(CClassTrib);
+  end;
+end;
+
+function TClassTribService.ConverterPisCofinsParaCBS(const CSTPisCofins: string): TClassTribMetadata;
+var
+  CClassTrib: string;
+  CSTPisCofinsNormalizado: string;
+  CSTPisCofinsCodigo: Integer;
+begin
+  Result := Default(TClassTribMetadata);
+
+  // Normaliza CST removendo zeros à esquerda para pesquisa
+  CSTPisCofinsNormalizado := CSTPisCofins.TrimLeft(['0']);
+  if CSTPisCofinsNormalizado = '' then
+    CSTPisCofinsNormalizado := '0';
+
+  // Verifica se o código PIS/COFINS existe no mapeamento
+  if FMapeamentoPisCofins.TryGetValue(CSTPisCofinsNormalizado, CClassTrib) then
+    Result := GetByCodigo(CClassTrib);
+
+  // Se não encontrou, tenta criar uma instância mais genérica baseada no CST
+  if Result.Codigo = '' then
+  begin
+    CSTPisCofinsCodigo := StrToIntDef(CSTPisCofinsNormalizado, -1);
+
+    // Mapeamento por caso individual e por faixas para CST PIS/COFINS
+    case CSTPisCofinsCodigo of
+      1:  CClassTrib := '000001'; // Alíquota Básica
+      2:  CClassTrib := '011001'; // Alíquota Diferenciada
+      3:  CClassTrib := '620001'; // Alíquota por Unidade
+      4:  CClassTrib := '620005'; // Monofásica - Revenda Zero
+      5:  CClassTrib := '620002'; // Substituição Tributária
+      6:  CClassTrib := '200001'; // Alíquota Zero
+      7:  CClassTrib := '400001'; // Isenta
+      8:  CClassTrib := '410001'; // Sem Incidência
+      9:  CClassTrib := '550001'; // Suspensão
+      49: CClassTrib := '900001'; // Outras Saídas
+    else
+      // Tratamento por faixas
+      if (CSTPisCofinsCodigo >= 50) and (CSTPisCofinsCodigo <= 66) then
+        CClassTrib := '000001'  // Operações com crédito
+      else if (CSTPisCofinsCodigo >= 70) and (CSTPisCofinsCodigo <= 75) then
+        CClassTrib := '410001'  // Operações sem crédito
+      else if (CSTPisCofinsCodigo = 98) or (CSTPisCofinsCodigo = 99) then
+        CClassTrib := '900001'  // Outras entradas ou outras operações
+      else
+        CClassTrib := '900001'; // Outro/Não identificado
+    end;
+
+    Result := GetByCodigo(CClassTrib);
+  end;
+end;
+
+// Nova função para obter dados completos da conversão com tipo enumerado
+function TClassTribService.ObterDadosConversaoIBS(const TipoCST: TTipoCST; const CodigoCST: string): TConversionResult;
+var
+  Metadata: TClassTribMetadata;
+begin
+  Result.CSTResult := '';
+  Result.Codigo := '';
+  Result.Descricao := '';
+  Result.Metadata := Default(TClassTribMetadata);
+
+  // Determina qual tipo de conversão aplicar baseado no tipo enumerado
+  case TipoCST of
+    tpmodCST:
+      Metadata := ConverterICMSParaIBS(CodigoCST);
+    tpmodCSOSN:
+      Metadata := ConverterCSOSNParaIBS(CodigoCST);
+    tpmodCSTPisCofins:
+      Metadata := ConverterPisCofinsParaCBS(CodigoCST);
+  end;
+
+  // Preenche os dados do resultado
+  if Metadata.Codigo <> '' then
+  begin
+    Result.CSTResult := Metadata.CST;
+    Result.Codigo := Metadata.Codigo;
+    Result.Descricao := Metadata.Descricao;
+    Result.Metadata := Metadata;
+  end;
+end;
+
+procedure TClassTribService.LoadMapeamentos;
+begin
+  // Mapeamento CST ICMS -> CClassTrib
+  FMapeamentoICMS.Add('00', '000001');
+  FMapeamentoICMS.Add('10', '620001');
+  FMapeamentoICMS.Add('20', '210001');
+  FMapeamentoICMS.Add('30', '620003');
+  FMapeamentoICMS.Add('40', '400001');
+  FMapeamentoICMS.Add('41', '410001');
+  FMapeamentoICMS.Add('50', '550001');
+  FMapeamentoICMS.Add('51', '510001');
+  FMapeamentoICMS.Add('60', '620005');
+  FMapeamentoICMS.Add('70', '620002');
+  FMapeamentoICMS.Add('90', '900001');
+
+  // Mapeamento CSOSN -> CClassTrib
+  FMapeamentoCSOSN.Add('101', '000001');
+  FMapeamentoCSOSN.Add('102', '000001');
+  FMapeamentoCSOSN.Add('103', '400001');
+  FMapeamentoCSOSN.Add('201', '620002');
+  FMapeamentoCSOSN.Add('202', '620002');
+  FMapeamentoCSOSN.Add('203', '620003');
+  FMapeamentoCSOSN.Add('300', '410005');
+  FMapeamentoCSOSN.Add('400', '410001');
+  FMapeamentoCSOSN.Add('500', '620005');
+  FMapeamentoCSOSN.Add('900', '900001');
+
+  // Mapeamento CST PIS/COFINS -> CClassTrib
+  FMapeamentoPisCofins.Add('01', '000001');
+  FMapeamentoPisCofins.Add('02', '011001');
+  FMapeamentoPisCofins.Add('03', '620001');
+  FMapeamentoPisCofins.Add('04', '620005');
+  FMapeamentoPisCofins.Add('05', '620002');
+  FMapeamentoPisCofins.Add('06', '200001');
+  FMapeamentoPisCofins.Add('07', '400001');
+  FMapeamentoPisCofins.Add('08', '410001');
+  FMapeamentoPisCofins.Add('09', '550001');
+  FMapeamentoPisCofins.Add('49', '900001');
+  FMapeamentoPisCofins.Add('50', '000001');
+  FMapeamentoPisCofins.Add('51', '000001');
+  FMapeamentoPisCofins.Add('52', '000001');
+  FMapeamentoPisCofins.Add('53', '000001');
+  FMapeamentoPisCofins.Add('54', '000001');
+  FMapeamentoPisCofins.Add('55', '000001');
+  FMapeamentoPisCofins.Add('56', '000001');
+  FMapeamentoPisCofins.Add('60', '410001');
+  FMapeamentoPisCofins.Add('70', '410001');
+  FMapeamentoPisCofins.Add('71', '410001');
+  FMapeamentoPisCofins.Add('72', '410001');
+  FMapeamentoPisCofins.Add('73', '410001');
+  FMapeamentoPisCofins.Add('74', '410001');
+  FMapeamentoPisCofins.Add('75', '410001');
+  FMapeamentoPisCofins.Add('98', '900001');
+  FMapeamentoPisCofins.Add('99', '900001');
+end;
+
+procedure TClassTribService.LoadClassTribData;
+var
+  Metadata: TClassTribMetadata;
+begin
+ Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '000';
+  Metadata.Codigo := '000001';
+  Metadata.Descricao := 'Situações tributadas integralmente pelo IBS e CBS.';
+  Metadata.ArtigoLei := '';
+  Metadata.TipoTributacao := 'Tributação integral';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := '';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '000';
+  Metadata.Codigo := '000002';
+  Metadata.Descricao := 'Exploração de via, observado o art. 11 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 11, VIII';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 11. Considera-se local da operação com: VIII - serviço de exploração de via, mediante cobrança de valor a qualquer título, incluindo tarifas, pedágios e quaisquer outras formas de cobrança, o território de cada Município e Estado, ou do Distrito Federal, proporcionalmente à correspondente extensão da via explorada;';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := 'Livro I Do Imposto Sobre Bens E Serviços (IBS) E Da Contribuição Social Sobre Bens E Serviços (CBS) Título I Das Normas Gerais Do IBS E Da CBS Capítulo II Do IBS E Da CBS Sobre Operações Seção IV Do Local Da Operação';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '000';
+  Metadata.Codigo := '000003';
+  Metadata.Descricao := 'Regime automotivo - projetos incentivados, observado o art. 311 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 311';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 311. Em relação aos projetos habilitados à fruição dos benefícios estabelecidos pelo art. 11-C da Lei nº 9.440, de 14 de março de 1997, o crédito presumido de que trata o art. 309 desta Lei Complementar será calculado mediante a aplicação dos seguintes percentuais sobre o valor das vendas no mercado interno, em cada mês, dos produtos constantes nos projetos de que trata o art. 309, fabricados ou montados nos estabelecimentos incentivados:';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := 'Livro I Do Imposto Sobre Bens E Serviços (IBS) E Da Contribuição Social Sobre Bens E Serviços (CBS) Título VI Dos Regimes Diferenciados Da CBS Capítulo II Do Regime Automotivo';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '000';
+  Metadata.Codigo := '000004';
+  Metadata.Descricao := 'Regime automotivo - projetos incentivados, observado o art. 312 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 312';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 312. Em relação aos projetos habilitados à fruição dos benefícios estabelecidos pelos arts. 1º a 4º da Lei nº 9.826, de 23 de agosto de 1999, o crédito presumido de que trata o art. 309 desta Lei Complementar corresponderá ao produto da multiplicação dos seguintes fatores:';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Manutenção de crédito (alíquota zero)';
+  Metadata.CreditoParaFrente := 'N (Art. 47)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '010';
+  Metadata.Codigo := '010001';
+  Metadata.Descricao := 'Operações do FGTS não realizadas pela Caixa Econômica Federal, observado o art. 212 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 212';
+  Metadata.TipoTributacao := 'Tributação com alíquotas uniformes - operações setor financeiro';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 212. As operações relacionadas ao Fundo de Garantia do Tempo de Serviço (FGTS) ficam sujeitas à incidência do IBS e da CBS, por alíquota nacionalmente uniforme, a ser fixada de modo a manter a carga tributária incidente sobre essas operações. § 3º Ficam sujeitas: II - às alíquotas necessárias para manter a carga tributária, as operações previstas nos incisos II e III do § 2º deste artigo.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Manutenção de crédito (alíquota zero)';
+  Metadata.CreditoParaFrente := 'N (Art. 47)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '011';
+  Metadata.Codigo := '011001';
+  Metadata.Descricao := 'Planos de assistência funerária, observado o art. 236 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 236';
+  Metadata.TipoTributacao := 'Tributação com alíquotas uniformes reduzidas em 60%';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 236. Os planos de assistência funerária ficam sujeitos ao disposto nos arts. 234 a 242 desta Lei Complementar.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '011';
+  Metadata.Codigo := '011002';
+  Metadata.Descricao := 'Planos de assistência à saúde, observado o art. 237 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 237';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := True;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 237. As alíquotas de IBS e de CBS no regime específico de planos de assistência à saúde são nacionalmente uniformes e correspondem às alíquotas de referência de cada esfera federativa, reduzidas em 60% (sessenta por cento).';
+  Metadata.PercentualReducaoAliquota := 60;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '011';
+  Metadata.Codigo := '011003';
+  Metadata.Descricao := 'Intermediação de planos de assistência à saúde, observado o art. 240 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 240';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 240. Os serviços de intermediação de planos de assistência à saúde ficam sujeitos à incidência do IBS e da CBS sobre o valor da operação pela mesma alíquota aplicável ao plano de assistência à saúde.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '011';
+  Metadata.Codigo := '011004';
+  Metadata.Descricao := 'Concursos e prognósticos, observado o art. 246 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 246';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 246. As alíquotas do IBS e da CBS sobre concursos de prognósticos são nacionalmente uniformes e correspondem à soma das alíquotas de referência das esferas federativas.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '011';
+  Metadata.Codigo := '011005';
+  Metadata.Descricao := 'Planos de assistência à saúde de animais domésticos, observado o art. 243 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 243';
+  Metadata.TipoTributacao := 'Tributação com alíquotas uniformes reduzidas em 30%';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 243. Os planos de assistência à saúde de animais domésticos ficam sujeitos ao disposto nos arts. 234 a 242 desta Lei Complementar, com exceção das alíquotas aplicáveis, que serão nacionalmente uniformes e corresponderão à soma das alíquotas de referência de cada esfera federativa, reduzidas em 30% (trinta por cento), vedado o crédito ao adquirente.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200001';
+  Metadata.Descricao := 'Aquisições de máquinas, de aparelhos, de instrumentos, de equipamentos, de matérias-primas, de produtos intermediários e de materiais de embalagem realizadas entre empresas autorizadas a operar em zonas de processamento de exportação, observado o art. 103 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 103';
+  Metadata.TipoTributacao := 'Alíquota zero';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := True;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 103. Ficam reduzidas a zero as alíquotas do IBS e da CBS incidentes sobre os serviços de transporte: I - dos bens de que tratam os arts. 99 e 100 desta Lei Complementar, até as zonas de processamento de exportação; e II - dos bens exportados a partir das zonas de processamento de exportação.';
+  Metadata.PercentualReducaoAliquota := 100;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Manutenção de crédito (alíquota zero)';
+  Metadata.CreditoParaFrente := 'N (Art. 49)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200002';
+  Metadata.Descricao := 'Fornecimento ou importação de tratores, máquinas e implementos agrícolas, destinados a produtor rural não contribuinte, e de veículos de transporte de carga destinados a transportador autônomo de carga pessoa física não contribuinte, observado o art. 110 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 110';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 110. Ficam reduzidas a zero as alíquotas do IBS e da CBS no fornecimento e na importação:  I - de tratores, máquinas e implementos agrícolas, destinados a produtor rural não contribuinte de que trata o art. 164; e  II - de veículos de transporte de carga destinados a transportador autônomo de carga pessoa física não contribuinte de que trata o art. 169.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Manutenção de crédito (alíquota zero)';
+  Metadata.CreditoParaFrente := 'N (Art. 49)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200003';
+  Metadata.Descricao := 'Vendas de produtos destinados à alimentação humana relacionados no Anexo I da Lei Complementar nº 214, de 2025, com a especificação das respectivas classificações da NCM/SH, que compõem a Cesta Básica Nacional de Alimentos, criada nos termos do art. 8º da Emenda Constitucional nº 132, de 20 de dezembro de 2023, observado o art. 125 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 125';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := True;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 125. Ficam reduzidas a zero as alíquotas do IBS e da CBS incidentes sobre as vendas de produtos destinados à alimentação humana relacionados no Anexo I desta Lei Complementar, com a especificação das respectivas classificações da NCM/SH, que compõem a Cesta Básica Nacional de Alimentos, criada nos termos do art. 8º da Emenda Constitucional nº 132, de 20 de dezembro de 2023.';
+  Metadata.PercentualReducaoAliquota := 100;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Manutenção de crédito (alíquota zero)';
+  Metadata.CreditoParaFrente := 'N (Art. 49)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200004';
+  Metadata.Descricao := 'Venda de dispositivos médicos com a especificação das respectivas classificações da NCM/SH previstas no Anexo XII da Lei Complementar nº 214, de 2025, observado o art. 144 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 144, I';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := True;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 144. Ficam reduzidas a zero as alíquotas do IBS e da CBS incidentes sobre o fornecimento dos dispositivos médicos relacionados: I - no Anexo XII desta Lei Complementar, com a especificação das respectivas classificações da NCM/SH; e';
+  Metadata.PercentualReducaoAliquota := 100;
+  Metadata.TributosRelacionados := 'ICMS e ISS';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Manutenção de crédito (alíquota zero)';
+  Metadata.CreditoParaFrente := 'N (Art. 49)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200005';
+  Metadata.Descricao := 'Venda de dispositivos médicos com a especificação das respectivas classificações da NCM/SH previstas no Anexo IV da Lei Complementar nº 214, de 2025, quando adquiridos por órgãos da administração pública direta, autarquias e fundações públicas, observado o art. 144 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 144, II';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := 'Adm. Pública';
+  Metadata.ExigeNBSouNCM := True;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 144. Ficam reduzidas a zero as alíquotas do IBS e da CBS incidentes sobre o fornecimento dos dispositivos médicos relacionados: II - no Anexo IV desta Lei Complementar, com a especificação das respectivas classificações da NCM/SH, caso adquiridos por: a) órgãos da administração pública direta, autarquias e fundações públicas; e  b) as entidades de saúde imunes ao IBS e à CBS que possuam Certificação de Entidade Beneficente de Assistência Social (CEBAS) por comprovarem a prestação de serviços ao SUS, nos termos dos arts. 9º a 11 da Lei Complementar nº 187, de 16 de dezembro de 2021.';
+  Metadata.PercentualReducaoAliquota := 100;
+  Metadata.TributosRelacionados := 'ICMS';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Manutenção de crédito (alíquota zero)';
+  Metadata.CreditoParaFrente := 'N (Art. 49)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200006';
+  Metadata.Descricao := 'Situação de emergência de saúde pública reconhecida pelo Poder Legislativo federal, estadual, distrital ou municipal competente, ato conjunto do Ministro da Fazenda e do Comitê Gestor do IBS poderá ser editado, a qualquer momento, para incluir dispositivos não listados no Anexo XIII da Lei Complementar nº 214, de 2025, limitada a vigência do benefício ao período e à localidade da emergência de saúde pública, observado o art. 144 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 144, § 3º';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 144. Ficam reduzidas a zero as alíquotas do IBS e da CBS incidentes sobre o fornecimento dos dispositivos médicos relacionados: § 3º Em caso de emergência de saúde pública reconhecida pelo Poder Legislativo federal, estadual, distrital ou municipal competente, ato conjunto do Ministro de Estado da Fazenda e do Comitê Gestor do IBS poderá ser editado, a qualquer momento, para incluir dispositivos não listados no Anexo XII desta Lei Complementar, limitada a vigência do benefício ao período e à localidade da emergência de saúde pública.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Manutenção de crédito (alíquota zero)';
+  Metadata.CreditoParaFrente := 'N (Art. 49)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200007';
+  Metadata.Descricao := 'Fornecimento dos dispositivos de acessibilidade próprios para pessoas com deficiência relacionados no Anexo XIV da Lei Complementar nº 214, de 2025, com a especificação das respectivas classificações da NCM/SH, observado o art. 145 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 145, I';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := True;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 145. Ficam reduzidas a zero as alíquotas do IBS e da CBS incidentes sobre o fornecimento dos dispositivos de acessibilidade próprios para pessoas com deficiência relacionados:  I - no Anexo XIII desta Lei Complementar, com a especificação das respectivas classificações da NCM/SH; e';
+  Metadata.PercentualReducaoAliquota := 100;
+  Metadata.TributosRelacionados := 'ICMS';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Manutenção de crédito (alíquota zero)';
+  Metadata.CreditoParaFrente := 'N (Art. 49)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200008';
+  Metadata.Descricao := 'Fornecimento dos dispositivos de acessibilidade próprios para pessoas com deficiência relacionados no Anexo V da Lei Complementar nº 214, de 2025, com a especificação das respectivas classificações da NCM/SH, quando adquiridos por órgãos da administração pública direta, autarquias, fundações públicas e entidades imunes, observado o art. 145 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 145, II';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := 'Adm. Pública';
+  Metadata.ExigeNBSouNCM := True;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 145. Ficam reduzidas a zero as alíquotas do IBS e da CBS incidentes sobre o fornecimento dos dispositivos de acessibilidade próprios para pessoas com deficiência relacionados:  II - no Anexo V desta Lei Complementar, com a especificação das respectivas classificações da NCM/SH, quando adquiridos por: a) órgãos da administração pública direta, autarquias e fundações públicas; e b) as entidades de saúde imunes ao IBS e à CBS que possuam CEBAS por comprovarem a prestação de serviços ao SUS, nos termos dos arts. 9º a 11 da Lei Complementar nº 187, de 2021.';
+  Metadata.PercentualReducaoAliquota := 100;
+  Metadata.TributosRelacionados := 'ICMS';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Manutenção de crédito (alíquota zero)';
+  Metadata.CreditoParaFrente := 'N (Art. 49)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200009';
+  Metadata.Descricao := 'Fornecimento dos medicamentos relacionados no Anexo XIV da Lei Complementar nº 214, de 2025, com a especificação das respectivas classificações da NCM/SH, observado o art. 146 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 146';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := True;
+  Metadata.SemNBScomCodServico := True;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 146. Ficam reduzidas a zero as alíquotas do IBS e da CBS sobre o fornecimento dos medicamentos relacionados no Anexo XIV desta Lei Complementar, com a especificação das respectivas classificações da NCM/SH.';
+  Metadata.PercentualReducaoAliquota := 100;
+  Metadata.TributosRelacionados := 'ICMS e ISS';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Manutenção de crédito (alíquota zero)';
+  Metadata.CreditoParaFrente := 'N (Art. 49)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200010';
+  Metadata.Descricao := 'Fornecimento dos medicamentos registrados na Anvisa, quando adquiridos por órgãos da administração pública direta, autarquias, fundações públicas e entidades imunes, observado o art. 146 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 146, § 1º';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := 'Adm. Pública';
+  Metadata.ExigeNBSouNCM := True;
+  Metadata.SemNBScomCodServico := True;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 146. § 1º Ficam também reduzidas a zero as alíquotas do IBS e da CBS sobre o fornecimento de medicamentos registrados na Anvisa, quando adquiridos por:  I - órgãos da administração pública direta, autarquias e fundações públicas; e  II - as entidades de saúde imunes ao IBS e à CBS que possuam CEBAS por comprovarem a prestação de serviços ao SUS, nos termos dos arts. 9º a 11 da Lei Complementar nº 187, de 2021.';
+  Metadata.PercentualReducaoAliquota := 100;
+  Metadata.TributosRelacionados := 'ICMS e ISS';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Manutenção de crédito (alíquota zero)';
+  Metadata.CreditoParaFrente := 'N (Art. 49)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200011';
+  Metadata.Descricao := 'Fornecimento das composições para nutrição enteral e parenteral, composições especiais e fórmulas nutricionais destinadas às pessoas com erros inatos do metabolismo relacionadas no Anexo VI da Lei Complementar nº 214, de 2025, com a especificação das respectivas classificações da NCM/SH, quando adquiridas por órgãos da administração pública direta, autarquias e fundações públicas, observado o art. 146 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 146, § 2º';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 146. 2º A redução de alíquotas de que trata o caput deste artigo aplica-se também ao fornecimento das composições para nutrição enteral e parenteral, composições especiais e fórmulas nutricionais destinadas às pessoas com erros inatos do metabolismo relacionadas no Anexo VI desta Lei Complementar, com a especificação das respectivas classificações da NCM/SH, quando adquiridas pelos órgãos e entidades mencionados nos incisos do § 1º deste artigo.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Manutenção de crédito (alíquota zero)';
+  Metadata.CreditoParaFrente := 'N (Art. 49)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200012';
+  Metadata.Descricao := 'Situação de emergência de saúde pública reconhecida pelo Poder Legislativo federal, estadual, distrital ou municipal competente, ato conjunto do Ministro da Fazenda e do Comitê Gestor do IBS poderá ser editado, a qualquer momento, para incluir dispositivos não listados no Anexo XIV da Lei Complementar nº 214, de 2025, limitada a vigência do benefício ao período e à localidade da emergência de saúde pública, observado o art. 146 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 146, § 4º';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 146. § 4º Em caso de emergência de saúde pública reconhecida pelo Poder Legislativo federal, estadual, distrital ou municipal competente, ato conjunto do Ministro de Estado da Fazenda e do Comitê Gestor do IBS poderá ser editado, a qualquer momento, para incluir medicamentos não listados no Anexo XIV desta Lei Complementar, limitada a vigência do benefício ao período e à localidade da emergência de saúde pública.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Manutenção de crédito (alíquota zero)';
+  Metadata.CreditoParaFrente := 'N (Art. 49)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200013';
+  Metadata.Descricao := 'Fornecimento de tampões higiênicos, absorventes higiênicos internos ou externos, descartáveis ou reutilizáveis, calcinhas absorventes e coletores menstruais, observado o art. 147 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 147';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := True;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 147. Ficam reduzidas a zero as alíquotas do IBS e da CBS incidentes sobre o fornecimento dos seguintes produtos de cuidados básicos à saúde menstrual:  I - tampões higiênicos classificados no código 9619.00.00 da NCM/SH;  II - absorventes higiênicos internos ou externos, descartáveis ou reutilizáveis, e calcinhas absorventes classificados no código 9619.00.00 da NCM/SH; e  III - coletores menstruais classificados no código 9619.00.00 da NCM/SH.';
+  Metadata.PercentualReducaoAliquota := 100;
+  Metadata.TributosRelacionados := 'ICMS';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Manutenção de crédito (alíquota zero)';
+  Metadata.CreditoParaFrente := 'N (Art. 49)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200014';
+  Metadata.Descricao := 'Fornecimento dos produtos hortícolas, frutas e ovos, relacionados no Anexo XV da Lei Complementar nº 214 , de 2025, com a especificação das respectivas classificações da NCM/SH e desde que não cozidos, observado o art. 148 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 148';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := True;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 148. Ficam reduzidas a zero as alíquotas do IBS e da CBS incidentes sobre o fornecimento dos produtos hortícolas, frutas e ovos relacionados no Anexo XV desta Lei Complementar, com a especificação das respectivas classificações da NCM/SH.';
+  Metadata.PercentualReducaoAliquota := 100;
+  Metadata.TributosRelacionados := 'ICMS';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Manutenção de crédito (alíquota zero)';
+  Metadata.CreditoParaFrente := 'N (Art. 49)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200015';
+  Metadata.Descricao := 'Venda de automóveis de passageiros de fabricação nacional de, no mínimo, 4 (quatro) portas, inclusive a de acesso ao bagageiro, quando adquiridos por motoristas profissionais que exerçam, comprovadamente, em automóvel de sua propriedade, atividade de condutor autônomo de passageiros, na condição de titular de autorização, permissão ou concessão do poder público, e que destinem o automóvel à utilização na categoria de aluguel (táxi), ou por pessoas com deficiência física, visual, auditiva, deficiência mental severa ou profunda, transtorno do espectro autista, com prejuízos na   comunicação social e em padrões restritos ou repetitivos de comportamento de nível moderado ou grave, nos termos da legislação relativa à matéria, observado o disposto no art. 149 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 149';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 149. Ficam reduzidas a zero as alíquotas do IBS e da CBS incidentes sobre a venda de automóveis de passageiros de fabricação nacional de, no mínimo, 4 (quatro) portas, inclusive a de acesso ao bagageiro, quando adquiridos por:';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Manutenção de crédito (alíquota zero)';
+  Metadata.CreditoParaFrente := 'N (Art. 49)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200016';
+  Metadata.Descricao := 'Prestação de serviços de pesquisa e desenvolvimento por Instituição Científica, Tecnológica e de Inovação (ICT) sem fins lucrativos para a administração pública direta, autarquias e fundações públicas ou para o contribuinte sujeito ao regime regular do IBS e da CBS, observado o disposto no art. 156  da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 156';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := 'Adm. Pública ou contribuinte IBS/CBS';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := True;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 156. Ficam reduzidas a zero as alíquotas do IBS e da CBS incidentes sobre a prestação de serviços de pesquisa e desenvolvimento por Instituição Científica, Tecnológica e de Inovação (ICT) sem fins lucrativos para:  I - a administração pública direta, autarquias e fundações públicas; ou II - contribuinte sujeito ao regime regular do IBS e da CBS.';
+  Metadata.PercentualReducaoAliquota := 100;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Manutenção de crédito (alíquota zero)';
+  Metadata.CreditoParaFrente := 'N (Art. 49)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200017';
+  Metadata.Descricao := 'Operações relacionadas ao FGTS, considerando aquelas necessárias à aplicação da Lei nº 8.036, de 1990, realizadas pelo Conselho Curador ou Secretaria Executiva do FGTS, observado o art. 212 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 212, § 3º, I';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := True;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 212. As operações relacionadas ao Fundo de Garantia do Tempo de Serviço (FGTS) ficam sujeitas à incidência do IBS e da CBS, por alíquota nacionalmente uniforme, a ser fixada de modo a manter a carga tributária incidente sobre essas operações. § 2º As operações relacionadas ao FGTS são aquelas necessárias à aplicação da Lei nº 8.036, de 11 de maio de 1990, realizadas:  I – pelo agente operador do FGTS; § 3º Ficam sujeitas: I - à alíquota zero do IBS e da CBS, as operações previstas no inciso I do § 2º deste artigo;';
+  Metadata.PercentualReducaoAliquota := 100;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Manutenção de crédito (alíquota zero)';
+  Metadata.CreditoParaFrente := 'N (Art. 49)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200018';
+  Metadata.Descricao := 'Operações de resseguro e retrocessão ficam sujeitas à incidência à alíquota zero, inclusive quando os prêmios de resseguro e retrocessão forem cedidos ao exterior, observado o art. 223 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 223, § 4º';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := 'Seguradora e resseguradora';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := True;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 223. Para fins de determinação da base de cálculo, nas operações de seguros e resseguros de que tratam, respectivamente, os incisos XI e XII do caput do art. 182 desta Lei Complementar: § 4º As operações de resseguro e retrocessão ficam sujeitas à incidência à alíquota zero, inclusive quando os prêmios de resseguro e retrocessão forem cedidos ao exterior.';
+  Metadata.PercentualReducaoAliquota := 100;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Manutenção de crédito (alíquota zero)';
+  Metadata.CreditoParaFrente := 'N (Art. 49)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200019';
+  Metadata.Descricao := 'Importador dos serviços financeiros seja contribuinte que realize as operações de que tratam os incisos I a V do caput do art. 182, será aplicada alíquota zero na importação, sem prejuízo da manutenção do direito de dedução dessas despesas da base de cálculo do IBS e da CBS, segundo, observado o art. 231 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 231, § 1º, II';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 231. Os serviços financeiros de que trata o art. 182 desta Lei Complementar, quando forem considerados importados, nos termos da Seção II do Capítulo IV do Título I deste Livro, ficam sujeitos à incidência do IBS e da CBS pela mesma alíquota aplicável aos respectivos serviços financeiros adquiridos de fornecedores domiciliados no País. § 1º Na importação de serviços financeiros: II - nas hipóteses em que o importador dos serviços financeiros seja contribuinte do IBS e da CBS sujeito ao regime regular e tenha direito de apropriação de créditos desses tributos na aquisição do mesmo serviço financeiro no País, de acordo com o disposto neste Capítulo, será aplicada alíquota zero na importação, e não serão apropriados créditos do IBS e da CBS; e';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := 'N (Art. 231)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200020';
+  Metadata.Descricao := 'Operação praticada por sociedades cooperativas optantes por regime específico do IBS e CBS, quando o associado destinar bem ou serviço à cooperativa de que participa, e a cooperativa fornecer bem ou serviço ao associado sujeito ao regime regular do IBS e da CBS, observado o art. 271 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 271';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := 'Cooperativa ou associado e familiares';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 271. As sociedades cooperativas poderão optar por regime específico do IBS e da CBS no qual ficam reduzidas a zero as alíquotas do IBS e da CBS incidentes na operação em que:  I - o associado fornece bem ou serviço à cooperativa de que participa; e II - a cooperativa fornece bem ou serviço a associado sujeito ao regime regular do IBS e da CBS.';
+  Metadata.PercentualReducaoAliquota := 100;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Manutenção de crédito (alíquota zero)';
+  Metadata.CreditoParaFrente := 'N (Art. 49)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200021';
+  Metadata.Descricao := 'Serviços de transporte público coletivo de passageiros ferroviário e hidroviário urbanos, semiurbanos e metropolitanos, observado o art. 285 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 285, I';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := True;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 285. Em relação aos serviços de transporte público coletivo de passageiros ferroviário e hidroviário de caráter urbano, semiurbano e metropolitano:  I - ficam reduzidas em 100% (cem por cento) as alíquotas do IBS e da CBS incidentes sobre o fornecimento desses serviços;';
+  Metadata.PercentualReducaoAliquota := 100;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'N (Art. 284 II)';
+  Metadata.CreditoParaFrente := 'N (Art. 284 III)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200022';
+  Metadata.Descricao := 'Operação originada fora da Zona Franca de Manaus que destine bem material industrializado de origem nacional a contribuinte estabelecido na Zona Franca de Manaus que seja habilitado nos termos do art. 442 da Lei Complementar nº 214, de 2025, e sujeito ao regime regular do IBS e da CBS ou optante pelo regime do Simples Nacional de que trata o art. 12 da Lei Complementar nº 123, de 2006, observado o art. 445 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 445';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 445. Ficam reduzidas a zero as alíquotas do IBS e da CBS incidentes sobre operação originada fora da Zona Franca de Manaus que destine bem material industrializado de origem nacional a contribuinte estabelecido na Zona Franca de Manaus que seja:';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := 'ICMS';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Manutenção de crédito (alíquota zero)';
+  Metadata.CreditoParaFrente := 'N (Art. 49)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200023';
+  Metadata.Descricao := 'Operação realizada por indústria incentivada que destine bem material intermediário para outra indústria incentivada na Zona Franca de Manaus, desde que a entrega ou disponibilização dos bens ocorra dentro da referida área, observado o art. 448 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 448';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 448. Ficam reduzidas a zero as alíquotas do IBS e da CBS incidentes sobre operação realizada por indústria incentivada que destine bem material intermediário para outra indústria incentivada na Zona Franca de Manaus, desde que a entrega ou disponibilização dos bens ocorra dentro da referida área. ';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Manutenção de crédito (alíquota zero)';
+  Metadata.CreditoParaFrente := 'N (Art. 49)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200024';
+  Metadata.Descricao := 'Operação originada fora das Áreas de Livre Comércio que destine bem material industrializado de origem nacional a contribuinte estabelecido nas Áreas de Livre Comércio que seja habilitado nos termos do art. 456 da Lei Complementar nº 214, de 2025, e sujeito ao regime regular do IBS e da CBS ou optante pelo regime do Simples Nacional de que trata o art. 12 da Lei Complementar nº 123, de 2006, observado o art. 463 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 463';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 463. Ficam reduzidas a zero as alíquotas do IBS e da CBS incidentes sobre operação originada fora da área de livre comércio que destine bem material industrializado de origem nacional a contribuinte estabelecido na área de livre comércio que seja:';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Manutenção de crédito (alíquota zero)';
+  Metadata.CreditoParaFrente := 'N (Art. 49)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200025';
+  Metadata.Descricao := 'Fornecimento dos serviços de educação relacionados ao Programa Universidade para Todos (Prouni), instituído pela Lei nº 11.096, de 13 de janeiro de 2005, observado o art. 308 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 308';
+  Metadata.TipoTributacao := 'Alíquota zero apenas CBS e reduzida em 60% para IBS';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 308. Fica reduzida a zero a alíquota da CBS incidente sobre o fornecimento de serviços de educação de ensino superior por instituição privada de ensino, com ou sem fins lucrativos, durante o período de adesão e vinculação ao Programa Universidade para Todos - Prouni, instituído pela Lei nº 11.096, de 13 de janeiro de 2005.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200026';
+  Metadata.Descricao := 'Locação de imóveis localizados nas zonas reabilitadas, pelo prazo de 5 (cinco) anos, contado da data de expedição do habite-se, e relacionados a projetos de reabilitação urbana de zonas históricas e de áreas críticas de recuperação e reconversão urbanística dos Municípios ou do Distrito Federal, a serem delimitadas por lei municipal ou distrital, observado o art. 158 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 158, parágrafo único';
+  Metadata.TipoTributacao := 'Alíquota reduzida em 80%';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 158. Observado o disposto neste Capítulo, ficam reduzidas em 60% (sessenta por cento) as alíquotas do IBS e da CBS sobre operações relacionadas a projetos de reabilitação urbana de zonas históricas e de áreas críticas de recuperação e reconversão urbanística dos Municípios ou do Distrito Federal, a serem delimitadas por lei municipal ou distrital.  Parágrafo único. Na hipótese de locação de imóveis prevista no inciso VI do caput do art. 162 desta Lei Complementar, a redução de alíquotas de que trata o caput deste artigo será de 80% (oitenta por cento).';
+  Metadata.PercentualReducaoAliquota := 80;
+  Metadata.TributosRelacionados := 'Aluguel';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200027';
+  Metadata.Descricao := 'Operações de locação, cessão onerosa e arrendamento de bens imóveis, observado o art. 261 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 261, parágrafo único';
+  Metadata.TipoTributacao := 'Alíquota reduzida em 70%';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 261. Parágrafo único. As alíquotas do IBS e da CBS relativas às operações de locação, cessão onerosa e arrendamento de bens imóveis ficam reduzidas em 70% (setenta por cento). ';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200028';
+  Metadata.Descricao := 'Fornecimento dos serviços de educação relacionados no Anexo II da Lei Complementar nº 214, de 2025, com a especificação das respectivas classificações da Nomenclatura Brasileira de Serviços, Intangíveis e Outras Operações que Produzam Variações no Patrimônio (NBS), observado o art. 129 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 129';
+  Metadata.TipoTributacao := 'Alíquota reduzida em 60%';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := True;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 129. Ficam reduzidas em 60% (sessenta por cento) as alíquotas do IBS e da CBS incidentes sobre o fornecimento dos serviços de educação relacionados no Anexo II desta Lei Complementar, com a especificação das respectivas classificações da Nomenclatura Brasileira de Serviços, Intangíveis e Outras Operações que Produzam Variações no Patrimônio (NBS).';
+  Metadata.PercentualReducaoAliquota := 60;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200029';
+  Metadata.Descricao := 'Fornecimento dos serviços de saúde humana relacionados no Anexo III da Lei Complementar nº 214, de 2025, com a especificação das respectivas classificações da NBS, observado o art. 130 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 130';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := True;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 130. Ficam reduzidas em 60% (sessenta por cento) as alíquotas do IBS e da CBS incidentes sobre o fornecimento dos serviços de saúde relacionados no Anexo III desta Lei Complementar, com a especificação das respectivas classificações da NBS.';
+  Metadata.PercentualReducaoAliquota := 60;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200030';
+  Metadata.Descricao := 'Venda dos dispositivos médicos relacionados no Anexo IV da Lei Complementar nº 214, de 2025, com a especificação das respectivas classificações da NCM/SH, observado o art. 131 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 131';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := True;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 131. Ficam reduzidas em 60% (sessenta por cento) as alíquotas do IBS e da CBS incidentes sobre o fornecimento dos dispositivos médicos relacionados no Anexo IV desta Lei Complementar, com a especificação das respectivas classificações da NCM/SH.';
+  Metadata.PercentualReducaoAliquota := 60;
+  Metadata.TributosRelacionados := 'ICMS';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200031';
+  Metadata.Descricao := 'Fornecimento dos dispositivos de acessibilidade próprios para pessoas com deficiência relacionados no Anexo V da Lei Complementar nº 214, de 2025, com a especificação das respectivas classificações da NCM/SH, observado o art. 132 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 132';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := True;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 132. Ficam reduzidas em 60% (sessenta por cento) as alíquotas do IBS e da CBS incidentes sobre o fornecimento dos dispositivos de acessibilidade próprios para pessoas com deficiência relacionados no Anexo V desta Lei Complementar, com a especificação das respectivas classificações da NCM/SH. ';
+  Metadata.PercentualReducaoAliquota := 60;
+  Metadata.TributosRelacionados := 'ICMS';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200032';
+  Metadata.Descricao := 'Fornecimento dos medicamentos registrados na Anvisa ou produzidos por farmácias de manipulação, ressalvados os medicamentos sujeitos à alíquota zero de que trata o art. 141 da Lei Complementar nº 214, de 2025, observado o art. 133 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 133';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := True;
+  Metadata.SemNBScomCodServico := True;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 133. Ficam reduzidas em 60% (sessenta por cento) as alíquotas do IBS e da CBS incidentes sobre o fornecimento dos medicamentos registrados na Anvisa ou produzidos por farmácias de manipulação, ressalvados os medicamentos sujeitos à alíquota zero de que trata o art. 146 desta Lei Complementar.';
+  Metadata.PercentualReducaoAliquota := 60;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200033';
+  Metadata.Descricao := 'Fornecimento das composições para nutrição enteral e parenteral, composições especiais e fórmulas nutricionais destinadas às pessoas com erros inatos do metabolismo relacionadas no Anexo VI da Lei Complementar nº 214, de 2025, com a especificação das respectivas classificações da NCM/SH, observado o art. 133 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 133, § 1º';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 133. § 1º A redução de alíquotas prevista no caput deste artigo aplica-se também às operações de fornecimento das composições para nutrição enteral e parenteral, composições especiais e fórmulas nutricionais destinadas às pessoas com erros inatos do metabolismo relacionadas no Anexo VI desta Lei Complementar, com a especificação das respectivas classificações da NCM/SH. ';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200034';
+  Metadata.Descricao := 'Fornecimento dos alimentos destinados ao consumo humano relacionados no Anexo VII da Lei Complementar nº 214, de 2025, com a especificação das respectivas classificações da NCM/SH, observado o art. 135 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 135';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := True;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 135. Ficam reduzidas em 60% (sessenta por cento) as alíquotas do IBS e da CBS incidentes sobre o fornecimento dos alimentos destinados ao consumo humano relacionados no Anexo VII desta Lei Complementar, com a especificação das respectivas classificações da NCM/SH.';
+  Metadata.PercentualReducaoAliquota := 60;
+  Metadata.TributosRelacionados := 'ICMS';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200035';
+  Metadata.Descricao := 'Fornecimento dos produtos de higiene pessoal e limpeza relacionados no Anexo VIII da Lei Complementar nº 214, de 2025, com a especificação das respectivas classificações da NCM/SH, observado o art. 136 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 136';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := True;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 136. Ficam reduzidas em 60% (sessenta por cento) as alíquotas do IBS e da CBS incidentes sobre o fornecimento dos produtos de higiene pessoal e limpeza relacionados no Anexo VIII desta Lei Complementar, com a especificação das respectivas classificações da NCM/SH.';
+  Metadata.PercentualReducaoAliquota := 60;
+  Metadata.TributosRelacionados := 'ICMS';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200036';
+  Metadata.Descricao := 'Fornecimento de produtos agropecuários, aquícolas, pesqueiros, florestais e extrativistas vegetais in natura, observado o art. 137 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 137';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := True;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 137. Ficam reduzidas em 60% (sessenta por cento) as alíquotas do IBS e da CBS incidentes sobre o fornecimento de produtos agropecuários, aquícolas, pesqueiros, florestais e extrativistas vegetais in natura.';
+  Metadata.PercentualReducaoAliquota := 60;
+  Metadata.TributosRelacionados := 'ICMS';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200037';
+  Metadata.Descricao := 'Fornecimento de serviços ambientais de conservação ou recuperação da vegetação nativa, mesmo que fornecidos sob a forma de manejo sustentável de sistemas agrícolas, agroflorestais e agrossilvopastoris, em conformidade com as definições e requisitos da legislação específica, observado o art. 137 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 137, § 3º';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 137. § 3º Para fins do disposto no caput deste artigo, considera-se fornecimento de produto florestal inclusive o fornecimento dos serviços ambientais de conservação ou recuperação da vegetação nativa, mesmo que fornecidos sob a forma de manejo sustentável de sistemas agrícolas, agroflorestais e agrossilvopastoris, em conformidade com as definições e requisitos da legislação específica.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200038';
+  Metadata.Descricao := 'Fornecimento dos insumos agropecuários e aquícolas relacionados no Anexo IX da Lei Complementar nº 214, de 2025, com a especificação das respectivas classificações da NCM/SH e da NBS, observado o art. 138 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 138';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := True;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 138. Ficam reduzidas em 60% (sessenta por cento) as alíquotas do IBS e da CBS incidentes sobre o fornecimento dos insumos agropecuários e aquícolas relacionados no Anexo IX desta Lei Complementar, com a especificação das respectivas classificações da NCM/SH e da NBS.';
+  Metadata.PercentualReducaoAliquota := 60;
+  Metadata.TributosRelacionados := 'ICMS';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200039';
+  Metadata.Descricao := 'Fornecimento dos serviços e o licenciamento ou cessão dos direitos relacionados no Anexo X da Lei Complementar nº 214, de 2025, com a especificação das respectivas classificações da NBS, quando destinados às seguintes produções nacionais artísticas, culturais, de eventos, jornalísticas e audiovisuais: espetáculos teatrais, circenses e de dança, shows musicais, desfiles carnavalescos ou folclóricos, eventos acadêmicos e científicos, como congressos, conferências e simpósios, feiras de negócios, exposições, feiras e mostras culturais, artísticas e literárias; programas de auditório ou jornalísticos, filmes, documentários, séries, novelas, entrevistas e clipes musicais, observado o art. 139 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 139';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := True;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 139. Ficam reduzidas em 60% (sessenta por cento) as alíquotas do IBS e da CBS incidentes sobre o fornecimento dos bens e serviços listados no Anexo X desta Lei Complementar, com a especificação das respectivas classificações da NCM/SH e NBS, nos casos relacionados com as seguintes produções nacionais artísticas, culturais, de eventos, jornalísticas e audiovisuais:';
+  Metadata.PercentualReducaoAliquota := 60;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200040';
+  Metadata.Descricao := 'Fornecimento dos seguintes serviços de comunicação institucional à administração pública direta, autarquias e fundações públicas: serviços direcionados ao planejamento, criação, programação e manutenção de páginas eletrônicas da ' +
+  'administração pública, ao monitoramento e gestão de suas redes sociais e à otimização de páginas e canais digitais para mecanismos de buscas e produção de mensagens, infográficos, painéis interativos e conteúdo institucional, serviços de relações com a imprensa, que reúnem estratégias organizacionais para promover e reforçar a comunicação dos órgãos e das entidades contratantes com seus públicos de interesse, por meio da interação com profissionais da imprensa, e serviços de relações públicas, que compreendem o esforço de comunicação planejado, coeso e contínuo que tem por objetivo estabelecer adequada percepção da atuação e dos objetivos institucionais, a partir do estímulo à compreensão mútua e da manutenção de padrões de relacionamento e fluxos de informação entre os órgãos e as entidades contratantes e seus públicos de interesse, no País e no exterior, observado o art. 140 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 140';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := 'Adm. Pública';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := True;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 140. Ficam reduzidas em 60% (sessenta por cento) as alíquotas do IBS e da CBS incidentes sobre o fornecimento dos seguintes serviços de comunicação institucional à administração pública direta, autarquias e fundações públicas:';
+  Metadata.PercentualReducaoAliquota := 60;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200041';
+  Metadata.Descricao := 'Operações relacionadas às seguintes atividades desportivas: fornecimento de serviço de educação desportiva, classificado no código 1.2205.12.00 da NBS, e gestão e exploração do desporto por associações e clubes esportivos filiados ao órgão estadual ou federal responsável pela coordenação dos desportos, inclusive por meio de venda de ingressos para eventos desportivos, fornecimento oneroso ou não de bens e serviços, inclusive ingressos, por meio de programas de sócio-torcedor, cessão dos direitos desportivos dos atletas e transferência de atletas para outra entidade desportiva ou seu retorno à atividade em outra entidade desportiva, observado o art. 141 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 141, I';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 141. Ficam reduzidas em 60% (sessenta por cento) as alíquotas do IBS e da CBS incidentes sobre as seguintes operações relacionadas a atividades desportivas: I - fornecimento de serviço de educação desportiva, classificado no código 1.2205.12.00 da NBS;';
+  Metadata.PercentualReducaoAliquota := 60;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200042';
+  Metadata.Descricao := 'Operações relacionadas ao fornecimento de serviço de educação desportiva, classificado no código 1.2205.12.00 da NBS, observado o art. 141 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 141, II';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 141. Ficam reduzidas em 60% (sessenta por cento) as alíquotas do IBS e da CBS incidentes sobre as seguintes operações relacionadas a atividades desportivas: II - gestão e exploração do desporto por associações e clubes esportivos filiados ao órgão estadual ou federal responsável pela coordenação dos desportos, inclusive por meio de venda de ingressos para eventos desportivos, fornecimento oneroso ou não de bens e serviços, inclusive ingressos, por meio de programas de sócio-torcedor, cessão dos direitos desportivos dos atletas e transferência de atletas para outra entidade desportiva ou seu retorno à atividade em outra entidade desportiva.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200043';
+  Metadata.Descricao := 'Fornecimento à administração pública direta, autarquias e fundações púbicas dos serviços e dos bens relativos à soberania e à segurança nacional, à segurança da informação e à segurança cibernética relacionados no Anexo XI da Lei Complementar nº 214, de 2025, com a especificação das respectivas classificações da NBS e da NCM/SH, observado o art. 142 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 142, I';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := 'Adm. Pública ou empresa com no mínimo 20% de capital social como sócio brasileiro';
+  Metadata.ExigeNBSouNCM := True;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 142. Ficam reduzidas em 60% (sessenta por cento) as alíquotas do IBS e da CBS sobre:  I - fornecimento à administração pública direta, autarquias e fundações púbicas dos serviços e dos bens relativos à soberania e à segurança nacional, à segurança da informação e à segurança cibernética relacionados no Anexo XI desta Lei Complementar, com a especificação das respectivas classificações da NBS e da NCM/SH; e';
+  Metadata.PercentualReducaoAliquota := 60;
+  Metadata.TributosRelacionados := 'ISS e ICMS';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200044';
+  Metadata.Descricao := 'Operações e prestações de serviços de segurança da informação e segurança cibernética desenvolvidos por sociedade que tenha sócio brasileiro com o mínimo de 20% (vinte por cento) do seu capital social, relacionados no Anexo XI da Lei Complementar nº 214, de 2025, com a especificação das respectivas classificações da NBS e da NCM/SH, observado o art. 142 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 142, II';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 142. Ficam reduzidas em 60% (sessenta por cento) as alíquotas do IBS e da CBS sobre:  II - operações e prestações de serviços de segurança da informação e segurança cibernética desenvolvidos por sociedade que tenha sócio brasileiro com o mínimo de 20% (vinte por cento) do seu capital social, relacionados no Anexo XI desta Lei Complementar, com a especificação das respectivas classificações da NBS e da NCM/SH.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200045';
+  Metadata.Descricao := 'Operações relacionadas a projetos de reabilitação urbana de zonas históricas e de áreas críticas de recuperação e reconversão urbanística dos Municípios ou do Distrito Federal, a serem delimitadas por lei municipal ou distrital, observado o art. 158 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 158';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := True;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 158. Observado o disposto neste Capítulo, ficam reduzidas em 60% (sessenta por cento) as alíquotas do IBS e da CBS sobre operações relacionadas a projetos de reabilitação urbana de zonas históricas e de áreas críticas de recuperação e reconversão urbanística dos Municípios ou do Distrito Federal, a serem delimitadas por lei municipal ou distrital.';
+  Metadata.PercentualReducaoAliquota := 60;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200046';
+  Metadata.Descricao := 'Operações com bens imóveis, observado o art. 261 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 261';
+  Metadata.TipoTributacao := 'Alíquota reduzida em 50%';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 261. As alíquotas do IBS e da CBS relativas às operações de que trata este Capítulo ficam reduzidas em 50% (cinquenta por cento).';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200047';
+  Metadata.Descricao := 'Bares e Restaurantes, observado o art. 275 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 275';
+  Metadata.TipoTributacao := 'Alíquota reduzida em 40%';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 275. As alíquotas do IBS e da CBS relativas às operações de que trata este Capítulo ficam reduzidas em 40% (quarenta por cento).';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := 'Livro I Do Imposto Sobre Bens E Serviços (IBS) E Da Contribuição Social Sobre Bens E Serviços (CBS) Capítulo VII Dos Bares, Restaurantes, Hotelaria, Parques De Diversão E Parques Temáticos, Transporte Coletivo De Passageiros E Agências De Viagem E De Turismo Seção I Dos Bares E RestaurantesTítulo V Dos Regimes Específicos Do IBS E Da CBS';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := 'N (Art. 275)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200048';
+  Metadata.Descricao := 'Hotelaria, Parques de Diversão e Parques Temáticos, observado o art. 281 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 281';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 281. As alíquotas do IBS e da CBS relativas às operações de que trata este Capítulo ficam reduzidas em 40% (quarenta por cento). ';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Manutenção de crédito (Art. 281)';
+  Metadata.CreditoParaFrente := 'N (Art. 281)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200049';
+  Metadata.Descricao := 'Transporte coletivo de passageiros rodoviário, ferroviário e hidroviário intermunicipais e interestaduais, observado o art. 286 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 286';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 286. Em relação aos serviços de transporte coletivo de passageiros rodoviário, ferroviário e hidroviário intermunicipais e interestaduais, as alíquotas do IBS e da CBS do regime específico de que trata essa Seção ficam reduzidas em 40% (quarenta por cento). ';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Manutenção de crédito (Art. 286)';
+  Metadata.CreditoParaFrente := 'S (Art. 286)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200450';
+  Metadata.Descricao := 'Serviços de transporte aéreo regional coletivo de passageiros ou de carga, observado o art. 287 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 287';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := True;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 287. Ficam reduzidas em 40% (quarenta por cento) as alíquotas do IBS e da CBS incidentes sobre o fornecimento do serviço de transporte aéreo regional coletivo de passageiros ou de carga.';
+  Metadata.PercentualReducaoAliquota := 40;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := 'S';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200051';
+  Metadata.Descricao := 'Agências de Turismo, , observado o art. 289 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 289, II';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 289. Nos demais serviços de intermediação prestados por agências de turismo: II - a alíquota é a mesma aplicável aos serviços de hotelaria, parques de diversão e parques temáticos;';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Manutenção de crédito (Art. 289 III)';
+  Metadata.CreditoParaFrente := 'S (Art. 290)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '200';
+  Metadata.Codigo := '200052';
+  Metadata.Descricao := 'Prestação de serviços das seguintes profissões intelectuais de natureza científica, literária ou artística, submetidas à fiscalização por conselho profissional: administradores, advogados, arquitetos e urbanistas, assistentes sociais, bibliotecários, biólogos, contabilistas, economistas, economistas domésticos, profissionais de educação física, engenheiros e agrônomos, estatísticos, médicos veterinários e zootecnistas, museólogos, químicos, profissionais de relações públicas, técnicos industriais e técnicos agrícolas, observado o art. 127 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 127, I a XVIII';
+  Metadata.TipoTributacao := 'Alíquota reduzida em 30%';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := True;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 127. Ficam reduzidas em 30% (trinta por cento) as alíquotas do IBS e da CBS incidentes sobre a prestação de serviços pelos seguintes profissionais, que exercerem atividades intelectuais de natureza científica, literária ou artística, submetidas à fiscalização por conselho profissional:  I – administradores; II – advogados; III – arquitetos e urbanistas; IV – assistentes sociais; V – bibliotecários; VI – biólogos; VII – contabilistas; VIII – economistas; IX – economistas domésticos; X – profissionais de educação física; XI – engenheiros e agrônomos; XII – estatísticos; XIII - médicos veterinários e zootecnistas; XIV – museólogos; XV – químicos; XVI – profissionais de relações públicas; XVII – técnicos industriais; e XVIII – técnicos agrícolas; ';
+  Metadata.PercentualReducaoAliquota := 30;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '210';
+  Metadata.Codigo := '210001';
+  Metadata.Descricao := 'Redutor social aplicado uma única vez na alienação de bem imóvel residencial novo, observado o art. 259 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Arts. 259 e 261';
+  Metadata.TipoTributacao := 'Alíquota reduzida em 50% com redutor de base de cálculo';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 259. Na alienação de bem imóvel residencial novo ou de lote residencial realizada por contribuinte sujeito ao regime regular do IBS e da CBS, poderá ser deduzido da base de cálculo do IBS e da CBS redutor social no valor de R$ 100.000,00 (cem mil reais) por bem imóvel residencial novo e de R$ 30.000,00 (trinta mil reais) por lote residencial, até o limite do valor da base de cálculo, após a dedução do redutor de ajuste. Art. 261. As alíquotas do IBS e da CBS relativas às operações de que trata este Capítulo ficam reduzidas em 50% (cinquenta por cento).';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '210';
+  Metadata.Codigo := '210002';
+  Metadata.Descricao := 'Redutor social aplicado uma única vez na alienação de lote residencial, observado o art. 259 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Arts. 259 e 261';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 259. Na alienação de bem imóvel residencial novo ou de lote residencial realizada por contribuinte sujeito ao regime regular do IBS e da CBS, poderá ser deduzido da base de cálculo do IBS e da CBS redutor social no valor de R$ 100.000,00 (cem mil reais) por bem imóvel residencial novo e de R$ 30.000,00 (trinta mil reais) por lote residencial, até o limite do valor da base de cálculo, após a dedução do redutor de ajuste. Art. 261. As alíquotas do IBS e da CBS relativas às operações de que trata este Capítulo ficam reduzidas em 50% (cinquenta por cento).';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '210';
+  Metadata.Codigo := '210003';
+  Metadata.Descricao := 'Redutor social em operações de locação, cessão onerosa e arrendamento de bens imóveis de uso residencial, observado o art. 260 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 260';
+  Metadata.TipoTributacao := 'Alíquota reduzida em 70% com redutor de base de cálculo';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 260. Na operação de locação, cessão onerosa ou arrendamento de bem imóvel para uso residencial realizada por contribuinte sujeito ao regime regular do IBS e da CBS, poderá ser deduzido da base de cálculo do IBS e da CBS redutor social no valor de R$ 600,00 (seiscentos reais) por bem imóvel, até o limite do valor da base de cálculo.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '220';
+  Metadata.Codigo := '220001';
+  Metadata.Descricao := 'Incorporação imobiliária submetida ao regime especial de tributação, observado o art. 485 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 485, I';
+  Metadata.TipoTributacao := 'Alíquota fixa';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 485. O contribuinte que realizar incorporação imobiliária submetida ao patrimônio de afetação, nos termos dos artigos 31-A a 31-E da Lei nº 4.591, de 16 de dezembro de 1964, que tenha realizado o pedido de opção pelo regime específico instituído pelo art. 1º e tenha o pedido efetivado nos termos do art. 2º, ambos da Lei Federal nº 10.931 de 2004, antes de 1º de janeiro de 2029, pode optar pelo recolhimento de CBS, da seguinte forma: I - a incorporação imobiliária submetida ao regime especial de tributação prevista nos arts. 4º e 8º da Lei Federal nº 10.931/2004 ficará sujeita ao pagamento de CBS em montante equivalente a 2,08% da receita mensal recebida;';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'N (Art. 485 § 2º)';
+  Metadata.CreditoParaFrente := 'N (Art. 485 § 4º)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '220';
+  Metadata.Codigo := '220002';
+  Metadata.Descricao := 'Incorporação imobiliária submetida ao regime especial de tributação, observado o art. 485 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 485, II';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 485. O contribuinte que realizar incorporação imobiliária submetida ao patrimônio de afetação, nos termos dos artigos 31-A a 31-E da Lei nº 4.591, de 16 de dezembro de 1964, que tenha realizado o pedido de opção pelo regime específico instituído pelo art. 1º e tenha o pedido efetivado nos termos do art. 2º, ambos da Lei Federal nº 10.931 de 2004, antes de 1º de janeiro de 2029, pode optar pelo recolhimento de CBS, da seguinte forma: II - a incorporação imobiliária submetida ao regime especial de tributação prevista no § 6º e § 8º do art. 4º e parágrafo único do art. 8º da Lei Federal nº 10.931/2004 ficará sujeita ao pagamento de CBS em montante equivalente a 0,53% da receita mensal recebida.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'N (Art. 485 § 2º)';
+  Metadata.CreditoParaFrente := 'N (Art. 485 § 4º)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '220';
+  Metadata.Codigo := '220003';
+  Metadata.Descricao := 'Alienação de imóvel decorrente de parcelamento do solo, observado o art. 486 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 486';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 486. O contribuinte que realizar alienação de imóvel decorrente de parcelamento do solo, que tenha o pedido de registro do parcelamento, nos termos da Lei Federal nº 6.766, de 19 de dezembro de 1979, efetivado antes de 1º de janeiro de 2029, pode optar pelo recolhimento de CBS com base na receita bruta recebida. § 1º As operações sujeitas ao regime de que trata este artigo estarão sujeitas ao pagamento de CBS em montante equivalente a 3,65% da receita bruta recebida.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'N (Art. 486 § 3º)';
+  Metadata.CreditoParaFrente := 'N (Art. 486 § 5º)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '221';
+  Metadata.Codigo := '221001';
+  Metadata.Descricao := 'Locação, cessão onerosa ou arrendamento de bem imóvel com alíquota sobre a receita bruta, observado o art. 487 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 487, § 2º';
+  Metadata.TipoTributacao := 'Alíquota fixa proporcional';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 487. O contribuinte que realizar locação, cessão onerosa ou arrendamento de bem imóvel decorrente de contratos firmados por prazo determinado poderá optar pelo recolhimento de IBS e CBS com base na receita bruta recebida. § 2º As operações sujeitas ao regime de que trata este artigo estarão sujeitas ao pagamento de IBS e CBS em montante equivalente a 3,65% da receita bruta recebida.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'N (Art. 487, § 4º)';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '400';
+  Metadata.Codigo := '400001';
+  Metadata.Descricao := 'Fornecimento de serviços de transporte público coletivo de passageiros rodoviário e metroviário de caráter urbano, semiurbano e metropolitano, sob regime de autorização, permissão ou concessão pública, observado o art. 157 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 157';
+  Metadata.TipoTributacao := 'Isenção';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := True;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 157. Fica isento do IBS e da CBS o fornecimento de serviços de transporte público coletivo de passageiros rodoviário e metroviário de caráter urbano, semiurbano e metropolitano, sob regime de autorização, permissão ou concessão pública.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Anulação proporcional (Art. 32)';
+  Metadata.CreditoParaFrente := 'N (Art. 49)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '410';
+  Metadata.Codigo := '410001';
+  Metadata.Descricao := 'Fornecimento de bonificações quando constem do respectivo documento fiscal e que não dependam de evento posterior, observado o art. 5º da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 5º, § 1º, I';
+  Metadata.TipoTributacao := 'Imunidade e não incidência';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 5º O IBS e a CBS também incidem sobre as seguintes operações: II – fornecimento de brindes e bonificações; § 1º O disposto no inciso II do caput deste artigo: I – não se aplica às bonificações que constem do respectivo documento fiscal e que não dependam de evento posterior;';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '410';
+  Metadata.Codigo := '410002';
+  Metadata.Descricao := 'Transferências entre estabelecimentos pertencentes ao mesmo contribuinte, observado o art. 6º da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 6º, II';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 6º O IBS e a CBS não incidem sobre:  II - transferência de bens entre estabelecimentos pertencentes ao mesmo contribuinte, observada a obrigatoriedade de emissão de documento fiscal eletrônico, nos termos do inciso II do § 2º do art. 60 desta Lei Complementar;';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '410';
+  Metadata.Codigo := '410003';
+  Metadata.Descricao := 'Doações, observado o art. 6º da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 6º, VIII';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 6º O IBS e a CBS não incidem sobre: VIII – doações sem contraprestação em benefício do doador;';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Anulação total (Art. 7º, § 2º)';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '410';
+  Metadata.Codigo := '410004';
+  Metadata.Descricao := 'Exportações de bens e serviços, observado o art. 8º da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 8º';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 8º São imunes ao IBS e à CBS as exportações de bens e de serviços, nos termos do Capítulo V deste Título.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Manutenção de crédito (exportação) - assegurados ao exportador a manutenção e o aproveitamento dos créditos relativos às operações nas quais seja adquirente de bem material ou imaterial, inclusive direitos, ou serviço, observado o disposto no § 5º, III do Art 156-A da Emenda Constitucional nº 132, de 2023.';
+  Metadata.CreditoParaFrente := 'N (Art. 49)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '410';
+  Metadata.Codigo := '410005';
+  Metadata.Descricao := 'Fornecimentos realizados pela União, pelos Estados, pelo Distrito Federal e pelos Municípios, observado o art. 9º da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 9º, I e § 1º';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := 'Adm. Pública';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 9º São imunes também ao IBS e à CBS os fornecimentos: I – realizados pela União, pelos Estados, pelo Distrito Federal e pelos Municípios; § 1º A imunidade prevista no inciso I do caput deste artigo é extensiva às autarquias e às fundações instituídas e mantidas pelo poder público e à empresa pública prestadora de serviço postal, bem como:';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Anulação proporcional (Art. 32)';
+  Metadata.CreditoParaFrente := 'N (Art. 49)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '410';
+  Metadata.Codigo := '410006';
+  Metadata.Descricao := 'Fornecimentos realizados por entidades religiosas e templos de qualquer culto, inclusive suas organizações assistenciais e beneficentes, observado o art. 9º da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 9º, II';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 9º São imunes também ao IBS e à CBS os fornecimentos: II - realizados por entidades religiosas e templos de qualquer culto, inclusive suas organizações assistenciais e beneficentes;';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Anulação proporcional (Art. 32)';
+  Metadata.CreditoParaFrente := 'N (Art. 49)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '410';
+  Metadata.Codigo := '410007';
+  Metadata.Descricao := 'Fornecimentos realizados por partidos políticos, inclusive suas fundações, entidades sindicais dos trabalhadores e instituições de educação e de assistência social, sem fins lucrativos, observado o art. 9º da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 9º, III';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 9º São imunes também ao IBS e à CBS os fornecimentos: III - realizados por partidos políticos, inclusive seus institutos e fundações, entidades sindicais dos trabalhadores e instituições de educação e de assistência social, sem fins lucrativos;';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Anulação proporcional (Art. 32)';
+  Metadata.CreditoParaFrente := 'N (Art. 49)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '410';
+  Metadata.Codigo := '410008';
+  Metadata.Descricao := 'Fornecimentos de livros, jornais, periódicos e do papel destinado a sua impressão, observado o art. 9º da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 9º, IV';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := True;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 9º São imunes também ao IBS e à CBS os fornecimentos: IV – de livros, jornais, periódicos e do papel destinado a sua impressão;';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Anulação proporcional (Art. 32)';
+  Metadata.CreditoParaFrente := 'N (Art. 49)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '410';
+  Metadata.Codigo := '410009';
+  Metadata.Descricao := 'Fornecimentos de fonogramas e videofonogramas musicais produzidos no Brasil contendo obras musicais ou literomusicais de autores brasileiros e/ou obras em geral interpretadas por artistas brasileiros, bem como os suportes materiais ou arquivos digitais que os contenham, salvo na etapa de replicação industrial de mídias ópticas de leitura a laser, observado o art. 9º da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 9º, V';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := True;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 9º São imunes também ao IBS e à CBS os fornecimentos: V - de fonogramas e videofonogramas musicais produzidos no Brasil contendo obras musicais ou literomusicais de autores brasileiros e/ou obras em geral interpretadas por artistas brasileiros, bem como os suportes materiais ou arquivos digitais que os contenham, salvo na etapa de replicação industrial de mídias ópticas de leitura a laser;';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Anulação proporcional (Art. 32)';
+  Metadata.CreditoParaFrente := 'N (Art. 49)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '410';
+  Metadata.Codigo := '410010';
+  Metadata.Descricao := 'Fornecimentos de serviço de comunicação nas modalidades de radiodifusão sonora e de sons e imagens de recepção livre e   gratuita, observado o art. 9º da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 9º, VI';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 9º São imunes também ao IBS e à CBS os fornecimentos: VI - de serviço de comunicação nas modalidades de radiodifusão sonora e de sons e imagens de recepção livre e gratuita; e';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := 'ICMS';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Anulação proporcional (Art. 32)';
+  Metadata.CreditoParaFrente := 'N (Art. 49)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '410';
+  Metadata.Codigo := '410011';
+  Metadata.Descricao := 'Fornecimentos de ouro, quando definido em lei como ativo financeiro ou instrumento cambial, observado o art. 9º da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 9º, VII';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 9º São imunes também ao IBS e à CBS os fornecimentos: VII - de ouro, quando definido em lei como ativo financeiro ou instrumento cambial.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := 'IOF';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Anulação proporcional (Art. 32)';
+  Metadata.CreditoParaFrente := 'N (Art. 49)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '410';
+  Metadata.Codigo := '410012';
+  Metadata.Descricao := 'Fornecimento de condomínio edilício não optante pelo regime regular, observado o art. 26 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 26, § 2º, II';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 26. Não são contribuintes do IBS e da CBS, ressalvado o disposto no inciso II do § 1º do art. ' +
+                         '156-A da Constituição Federal: I – condomínio edilício; § 2º  Em relação ao condomínio edilício de que trata o inciso I do caput deste artigo: I – caso exerça a opção pelo regime regular de que trata o § 1º deste artigo, o IBS e a CBS incidirão sobre todas as taxas e demais valores cobrados pelo condomínio dos seus condôminos e de terceiros; e II – caso não exerça a opção pelo regime regular e desde que as taxas e demais valores condominiais cobrados de seus condôminos representem menos de 80% (oitenta por cento) da receita total do condomínio: a) ficará sujeito à incidência do IBS e da CBS sobre as operações com bens e com serviços que realizar de acordo com o disposto no inciso I do caput do art. 21 desta Lei Complementar; e b) apropriará créditos na proporção da receita decorrente das operações tributadas na forma da alínea “a” deste inciso, em relação à receita total do condomínio.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '410';
+  Metadata.Codigo := '410013';
+  Metadata.Descricao := 'Exportações de combustíveis, observado o art. 98 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 98';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 98. Considera-se exportação o fornecimento de combustível ou lubrificante para abastecimento de aeronaves em tráfego internacional e com destino ao exterior. ';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := 'Manutenção de crédito (exportação)';
+  Metadata.CreditoParaFrente := 'N (Art. 49)';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '410';
+  Metadata.Codigo := '410014';
+  Metadata.Descricao := 'Fornecimento de produtor rural não contribuinte, observado o art. 164 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 164';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 164. O produtor rural pessoa física ou jurídica que auferir receita inferior a R$ 3.600.000,00 (três milhões e seiscentos mil reais) no ano-calendário e o produtor rural integrado não serão considerados contribuintes do IBS e da CBS.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '410';
+  Metadata.Codigo := '410015';
+  Metadata.Descricao := 'Fornecimento por transportador autônomo não contribuinte, observado o art. 169 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 169';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 169. O contribuinte de IBS e de CBS sujeito ao regime regular poderá apropriar créditos presumidos dos referidos tributos relativos às aquisições de serviço de transporte de carga de transportador autônomo pessoa física que não seja contribuinte dos referidos tributos ou que seja inscrito como MEI.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '410';
+  Metadata.Codigo := '410016';
+  Metadata.Descricao := 'Fornecimento ou aquisição de resíduos sólidos, observado o art. 170 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 170';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 170. O contribuinte de IBS e de CBS sujeito ao regime regular poderá apropriar créditos presumidos dos referidos tributos relativos às aquisições de resíduos sólidos de coletores incentivados para utilização em processo de destinação final ambientalmente adequada.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '410';
+  Metadata.Codigo := '410017';
+  Metadata.Descricao := 'Aquisição de bem móvel com crédito presumido sob condição de revenda realizada, observado o art. 171 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 171';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 171. O contribuinte de IBS e de CBS sujeito ao regime regular poderá apropriar créditos presumidos dos referidos tributos relativos às aquisições, para revenda, de bem móvel usado de pessoa física que não seja contribuinte dos referidos tributos ou que seja inscrita como MEI.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '410';
+  Metadata.Codigo := '410018';
+  Metadata.Descricao := 'Operações relacionadas aos fundos garantidores e executores de políticas públicas, inclusive de habitação, previstos em lei, assim entendidas os serviços prestados ao fundo pelo seu agente operador e por entidade encarregada da sua administração, observado o art. 213 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 213';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 213. Não ficam sujeitas à incidência do IBS e da CBS as operações relacionadas aos demais fundos garantidores e executores de políticas públicas, inclusive de habitação e de desenvolvimento regional, previstos em lei.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '410';
+  Metadata.Codigo := '410019';
+  Metadata.Descricao := 'Exclusão da gorjeta na base de cálculo no fornecimento de alimentação, observado o art. 274 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 274, I';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 274. A base de cálculo do IBS e da CBS é o valor da operação de fornecimento de alimentação e das bebidas de que trata o § 1o do art. 273 desta Lei Complementar. Parágrafo único. Ficam excluídos da base de cálculo:  I - a gorjeta incidente no fornecimento de alimentação, desde que:  a) seja repassada integralmente ao empregado, sem prejuízo dos valores da gorjeta que forem retidos pelo empregador em virtude de determinação legal; e  b) seu valor não exceda a 15% (quinze por cento) do valor total do fornecimento de alimento e bebidas;';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '410';
+  Metadata.Codigo := '410020';
+  Metadata.Descricao := 'Exclusão do valor de intermediação na base de cálculo no fornecimento de alimentação, observado o art. 274 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 274, II';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 274. A base de cálculo do IBS e da CBS é o valor da operação de fornecimento de alimentação e das bebidas de que trata o § 1º do art. 273 desta Lei Complementar. Parágrafo único. Ficam excluídos da base de cálculo: II - os valores não repassados aos bares e restaurantes pelo serviço de entrega e intermediação de pedidos de alimentação e bebidas por plataforma digital.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '510';
+  Metadata.Codigo := '510001';
+  Metadata.Descricao := 'Operações, sujeitas a diferimento, com energia elétrica ou com direitos a ela relacionados, relativas à geração, comercialização, distribuição e transmissão, observado o art. 28 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 28, § 1º';
+  Metadata.TipoTributacao := 'Diferimento';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 28. Nas operações com energia elétrica ou com direitos a ela relacionados, o recolhimento do IBS e da CBS relativo à geração, comercialização e distribuição e transmissão será realizado exclusivamente:  § 1º O recolhimento do IBS e da CBS incidentes nas operações com energia elétrica, ou com direitos a ela relacionados, relativas à geração, comercialização, distribuição e transmissão ocorrerá somente no fornecimento:  I - para consumo; ou II - para contribuinte não sujeito ao regime regular do IBS e da CBS.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '510';
+  Metadata.Codigo := '510002';
+  Metadata.Descricao := 'Operações, sujeitas a diferimento, com insumos agropecuários e aquícolas destinados a produtor rural contribuinte, observado o art. 138 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 138, § 2º';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 138. Ficam reduzidas em 60% (sessenta por cento) as alíquotas do IBS e da CBS incidentes sobre o fornecimento dos insumos agropecuários e aquícolas relacionados no Anexo IX desta Lei Complementar, com a especificação das respectivas classificações da NCM/SH e da NBS.  § 2º Fica diferido o recolhimento do IBS e da CBS incidentes nas seguintes operações com insumos agropecuários e aquícolas de que trata o caput:';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := 'ICMS';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '550';
+  Metadata.Codigo := '550001';
+  Metadata.Descricao := 'Exportações de bens materiais, observado o art. 82 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 82';
+  Metadata.TipoTributacao := 'Suspensão';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 82. Poderá ser suspenso o pagamento do IBS e da CBS no fornecimento de bens materiais com o fim específico de exportação a empresa comercial exportadora que atenda cumulativamente aos seguintes requisitos:';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '550';
+  Metadata.Codigo := '550002';
+  Metadata.Descricao := 'Regime de Trânsito, observado o art. 84 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 84';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 84. Fica suspenso o pagamento do IBS e da CBS incidentes na importação enquanto os bens materiais estiverem submetidos ao regime aduaneiro especial de trânsito aduaneiro, em qualquer de suas modalidades, observada a disciplina estabelecida na legislação aduaneira.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '550';
+  Metadata.Codigo := '550003';
+  Metadata.Descricao := 'Regimes de Depósito, observado o art. 85 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 85';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 85. Fica suspenso o pagamento do IBS e da CBS incidentes na importação enquanto os bens materiais estiverem submetidos a regime aduaneiro especial de depósito, observada a disciplina estabelecida na legislação aduaneira.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '550';
+  Metadata.Codigo := '550004';
+  Metadata.Descricao := 'Regimes de Depósito, observado o art. 87 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 87';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 87. Fica suspenso o pagamento do IBS e da CBS incidentes na importação e na aquisição no mercado interno de bens materiais submetidos a regime aduaneiro especial de lojas franca, observada a disciplina estabelecida na legislação aduaneira.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '550';
+  Metadata.Codigo := '550005';
+  Metadata.Descricao := 'Regimes de Depósito, observado o art. 87 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 87, parágrafo único';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 87.  Parágrafo único. Aplica-se o regime previsto no caput ao fornecimento de bens materiais destinados ao uso ou consumo de bordo, em aeronaves exclusivamente em tráfego internacional com destino ao exterior e entregues em zona primária alfandegada ou área de porto organizado alfandegado.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '550';
+  Metadata.Codigo := '550006';
+  Metadata.Descricao := 'Regimes de Permanência Temporária, observado o art. 88 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 88';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 88. Fica suspenso o pagamento do IBS e da CBS incidentes na importação enquanto os bens materiais estiverem submetidos a regime aduaneiro especial de permanência temporária no País ou de saída temporária do País, observada a disciplina estabelecida na legislação aduaneira.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '550';
+  Metadata.Codigo := '550007';
+  Metadata.Descricao := 'Regimes de Aperfeiçoamento, observado o art. 90 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 90';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 90. Fica suspenso o pagamento do IBS e da CBS incidentes na importação enquanto os bens materiais estiverem submetidos a regime aduaneiro especial de aperfeiçoamento, observada a disciplina estabelecida na legislação aduaneira.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '550';
+  Metadata.Codigo := '550008';
+  Metadata.Descricao := 'Importação de bens para o Regime de Repetro-Temporário, de que tratam o inciso I do art. 93 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 93, I';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 93. Observada a disciplina estabelecida na legislação aduaneira, fica suspenso o pagamento do IBS e da CBS nas seguintes operações: I - importação de bens destinados às atividades de exploração, de desenvolvimento e de produção de petróleo, de gás natural e de outros hidrocarbonetos fluidos previstas na legislação específica, cuja permanência no País seja de natureza temporária, constantes de relação especificada no regulamento (Repetro- Temporário);';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '550';
+  Metadata.Codigo := '550009';
+  Metadata.Descricao := 'GNL-Temporário, de que trata o inciso II do art. 93 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 93, II';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 93. Observada a disciplina estabelecida na legislação aduaneira, fica suspenso o pagamento do IBS e da CBS nas seguintes operações: II - importação de bens destinados às atividades de transporte, movimentação, transferência, armazenamento ou regaseificação de gás natural liquefeito constantes de relação especificada no regulamento (GNL-Temporário);';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '550';
+  Metadata.Codigo := '550010';
+  Metadata.Descricao := 'Repetro-Permanente, de que trata o inciso III do art. 93 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 93, III';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 93. Observada a disciplina estabelecida na legislação aduaneira, fica suspenso o pagamento do IBS e da CBS nas seguintes operações: III - importação de bens constantes de relação especificada no regulamento cuja permanência no País seja definitiva e que sejam destinados às atividades a que se refere o inciso I deste caput (Repetro-Permanente);';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '550';
+  Metadata.Codigo := '550011';
+  Metadata.Descricao := 'Repetro-Industrialização, de que trata o inciso IV do art. 93 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 93, IV';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 93. Observada a disciplina estabelecida na legislação aduaneira, fica suspenso o pagamento do IBS e da CBS nas seguintes operações: IV - importação ou aquisição no mercado interno de matérias-primas, produtos intermediários e materiais de embalagem para ser utilizados integralmente no processo produtivo de produto final a ser fornecido a empresa que o destine às atividades a que se refere o inciso I deste caput (Repetro-Industrialização);';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '550';
+  Metadata.Codigo := '550012';
+  Metadata.Descricao := 'Repetro-Nacional, de que trata o inciso V do art. 93 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 93, V';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 93. Observada a disciplina estabelecida na legislação aduaneira, fica suspenso o pagamento do IBS e da CBS nas seguintes operações: V - aquisição de produto final a que se refere o inciso IV deste caput (Repetro-Nacional);';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '550';
+  Metadata.Codigo := '550013';
+  Metadata.Descricao := 'Repetro-Entreposto, de que trata o inciso VI do art. 93 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 93, VI';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 93. Observada a disciplina estabelecida na legislação aduaneira, fica suspenso o pagamento do IBS e da CBS nas seguintes operações: VI - importação ou aquisição no mercado interno de bens constantes de relação especificada no regulamento, para conversão ou construção de outros bens no País, contratada por empresa sediada no exterior, cujo produto final deverá ser destinado às atividades a que se refere o inciso I deste caput (Repetro- Entreposto).';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '550';
+  Metadata.Codigo := '550014';
+  Metadata.Descricao := 'Zona de Processamento de Exportação, observado os arts. 99, 100 e 102 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Arts. 99, 100 e 102';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 99. As importações ou as aquisições no mercado interno de máquinas, de aparelhos, de instrumentos e de equipamentos realizadas por empresa autorizada a operar em zonas de processamento de exportação serão efetuadas com suspensão do pagamento do IBS e da CBS. Art. 100. As importações ou as aquisições no mercado interno de matérias-primas, de produtos intermediários e de materiais de embalagem realizadas por empresa autorizada a operar em zonas de processamento de exportação serão efetuadas com suspensão do pagamento do IBS e da CBS.  Art. 102. Aplica-se o tratamento estabelecido nos arts. 99 e 100 desta Lei Complementar às aquisições de máquinas, de aparelhos, de instrumentos, de equipamentos, de matérias-primas, de produtos intermediários e de materiais de embalagem realizadas entre empresas autorizadas a operar em zonas de processamento de exportação.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '550';
+  Metadata.Codigo := '550015';
+  Metadata.Descricao := 'Regime Tributário para Incentivo à Modernização e à Ampliação da Estrutura Portuária - Reporto, observado o art. 105 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 105';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 105. Observada a disciplina estabelecida na legislação específica, serão efetuadas com suspensão do pagamento do IBS e da CBS as importações e as aquisições no mercado interno de máquinas, equipamentos, peças de reposição e outros bens realizadas diretamente pelos beneficiários do Regime Tributário para Incentivo à Modernização e à Ampliação da Estrutura Portuária (Reporto) e destinadas ao seu ativo imobilizado para utilização exclusiva na execução de serviços de:';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '550';
+  Metadata.Codigo := '550016';
+  Metadata.Descricao := 'Regime Especial de Incentivos para o Desenvolvimento da Infraestrutura - Reidi, observado o art. 106 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 106';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 106. Observada a disciplina estabelecida na legislação específica, serão efetuadas com suspensão do pagamento do IBS e da CBS as importações e as aquisições no mercado interno de máquinas, aparelhos, instrumentos e equipamentos, novos, e de materiais de construção, realizadas diretamente pelos beneficiários do Regime Especial de Incentivos para o Desenvolvimento da Infraestrutura (Reidi) para utilização ou incorporação em obras de infraestrutura destinadas ao ativo imobilizado.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '550';
+  Metadata.Codigo := '550017';
+  Metadata.Descricao := 'Regime Tributário para Incentivo à Atividade Econômica Naval – Renaval, observado o art. 107 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 107';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 107. O Regime Tributário para Incentivo à Atividade Econômica Naval – Renaval permite aos beneficiários previamente habilitados suspensão do pagamento de IBS e CBS:';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '550';
+  Metadata.Codigo := '550018';
+  Metadata.Descricao := 'Desoneração da aquisição de bens de capital, , observado o art. 109 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 109';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 109. Ato conjunto do Poder Executivo da União e do Comitê Gestor do IBS poderá definir hipóteses em que importações e aquisições no mercado interno de bens de capital por contribuinte no regime regular serão realizadas com suspensão do pagamento do IBS e da CBS, não se aplicando o disposto no art. 108 desta Lei Complementar.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '550';
+  Metadata.Codigo := '550019';
+  Metadata.Descricao := 'Importação de bem material por indústria incentivada para utilização na Zona Franca de Manaus, observado o art. 443 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 443';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 443. Fica suspensa a incidência do IBS e da CBS na importação de bem material realizada por indústria incentivada para utilização na Zona Franca de Manaus.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '550';
+  Metadata.Codigo := '550020';
+  Metadata.Descricao := 'Áreas de livre comércio, observado o art. 461 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 461';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 461. Fica suspensa a incidência do IBS e da CBS na importação de bem material realizada por indústria habilitada na forma do inciso II do caput do art. 460 desta Lei Complementar e sujeita ao regime regular do IBS e da CBS para incorporação em seu processo produtivo.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '620';
+  Metadata.Codigo := '620001';
+  Metadata.Descricao := 'Tributação monofásica sobre combustíveis, observado o art. 172 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 172';
+  Metadata.TipoTributacao := 'Tributação monofásica';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 172. O IBS e a CBS incidirão uma única vez sobre as operações, ainda que iniciadas no exterior, com os seguintes combustíveis, qualquer que seja a sua finalidade:';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := 'ICMS';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '620';
+  Metadata.Codigo := '620002';
+  Metadata.Descricao := 'Tributação monofásica com responsabilidade pela retenção sobre combustíveis, observado o art. 178 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 178';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 178. Fica atribuída à refinaria de petróleo ou suas bases, à CPQ, ao formulador de combustíveis e ao importador, relativamente ao percentual de biocombustível utilizado na mistura, nas operações com gasolina A, a responsabilidade pela retenção e pelo recolhimento do IBS e da CBS incidentes nas importações de EAC ou sobre as saídas do estabelecimento produtor de EAC.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := 'ICMS';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '620';
+  Metadata.Codigo := '620003';
+  Metadata.Descricao := 'Tributação monofásica com tributos retidos por responsabilidade sobre combustíveis, observado o art. 178 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 178';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 178. Fica atribuída à refinaria de petróleo ou suas bases, à CPQ, ao formulador de combustíveis e ao importador, relativamente ao percentual de biocombustível utilizado na mistura, nas operações com gasolina A, a responsabilidade pela retenção e pelo recolhimento do IBS e da CBS incidentes nas importações de EAC ou sobre as saídas do estabelecimento produtor de EAC.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '620';
+  Metadata.Codigo := '620004';
+  Metadata.Descricao := 'Tributação monofásica sobre mistura de EAC com gasolina A em percentual superior ou inferior ao obrigatório, observado o art. 179 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 179, II';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 179. Nas operações com EAC:  II - a distribuidora de combustíveis que realizar mistura de EAC com gasolina A em percentual:  a) superior ao obrigatório, fica obrigada a recolher o IBS e a CBS de que trata o art. 172 desta Lei Complementar em relação ao volume de biocombustível correspondente ao que exceder ao percentual obrigatório de mistura; e  b) inferior ao obrigatório, terá direito ao ressarcimento do IBS e da CBS de que trata o art. 172 desta Lei Complementar em relação ao volume de biocombustível correspondente ao misturado a menor do que o percentual obrigatório de mistura.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '620';
+  Metadata.Codigo := '620005';
+  Metadata.Descricao := 'Tributação monofásica sobre combustíveis cobrada anteriormente, observador o art. 180 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 180';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 180. É vedada a apropriação de créditos em relação às aquisições de combustíveis sujeitos à incidência única do IBS e da CBS, quando destinadas à distribuição, à comercialização ou à revenda.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '800';
+  Metadata.Codigo := '800001';
+  Metadata.Descricao := 'Fusão, cisão ou incorporação, observado o art. 55 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 55';
+  Metadata.TipoTributacao := 'Transferência de crédito';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 55. É vedada a transferência, a qualquer título, para outra pessoa ou entidade sem personalidade jurídica, de créditos do IBS e da CBS. Parágrafo único. Na hipótese de fusão, cisão ou incorporação, os créditos apropriados e ainda não utilizados poderão ser transferidos para a pessoa jurídica sucessora, ficando preservada a data original da apropriação dos créditos para efeitos da contagem do prazo de que trata o art. 54 desta Lei Complementar.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '800';
+  Metadata.Codigo := '800002';
+  Metadata.Descricao := 'Transferência de crédito do associado, inclusive as cooperativas singulares, para cooperativa de que participa das operações antecedentes às operações em que fornece bens e serviços e os créditos presumidos, observado o art. 272 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 272';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 272. O associado sujeito ao regime regular do IBS e da CBS, inclusive as cooperativas singulares, que realizar operações com a redução de alíquota de que trata o inciso I do caput do art. 271 poderá transferir os créditos das operações antecedentes às operações em que fornece bens e serviços e os créditos presumidos à cooperativa de que participa, não se aplicando o disposto no art. 55 desta Lei Complementar.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '810';
+  Metadata.Codigo := '810001';
+  Metadata.Descricao := 'Crédito presumido sobre o valor apurado nos fornecimentos a partir da Zona Franca de Manaus, observado o art. 450 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 450';
+  Metadata.TipoTributacao := 'Ajustes';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 450. Ficam concedidos à indústria incentivada na Zona Franca de Manaus créditos presumidos de IBS e de CBS relativos à operação que destine ao território nacional, inclusive para a própria Zona Franca de Manaus, bem material produzido pela própria indústria incentivada na referida área nos termos do projeto econômico aprovado, exceto em relação às operações previstas no art. 447 desta Lei Complementar.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '820';
+  Metadata.Codigo := '820001';
+  Metadata.Descricao := 'Documento com informações de fornecimento de serviços de planos de assinstência à saúde, mas com tributação realizada por outro meio, observado o art. 235 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 235';
+  Metadata.TipoTributacao := 'Tributação em declaração de regime específico';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 234. Os planos de assistência à saúde ficam sujeitos a regime específico de incidência do IBS e da CBS, de acordo com o disposto neste Capítulo, nos casos em que esses serviços sejam prestados por:';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '820';
+  Metadata.Codigo := '820002';
+  Metadata.Descricao := 'Documento com informações de fornecimento de serviços de planos de assinstência funerária, mas com tributação realizada por outro meio, observado o art. 236 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 236';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 236. Os planos de assistência funerária ficam sujeitos ao disposto nos arts. 234 a 242 desta Lei Complementar.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '820';
+  Metadata.Codigo := '820003';
+  Metadata.Descricao := 'Documento com informações de fornecimento de serviços de planos de assinstência à saúde de animais domésticos, mas com tributação realizada por outro meio, observado o art. 243 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 243';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 243. Os planos de assistência à saúde de animais domésticos ficam sujeitos ao disposto nos arts. 234 a 242 desta Lei Complementar, com exceção das alíquotas aplicáveis, que serão nacionalmente uniformes e corresponderão à soma das alíquotas de referência de cada esfera federativa, reduzidas em 30% (trinta por cento), vedado o crédito ao adquirente.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '820';
+  Metadata.Codigo := '820004';
+  Metadata.Descricao := 'Documento com informações de prestação de serviços de consursos de prognósticos, mas com tributação realizada por outro meio, observado o art. 248 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 248';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 248. A empresa que opera concursos de prognósticos deverá apresentar obrigação acessória, na forma do regulamento, contendo, no mínimo, informações sobre o local onde a aposta é efetuada e os valores das apostas e das premiações pagas.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+  Metadata := Default(TClassTribMetadata);
+  Metadata.CST := '820';
+  Metadata.Codigo := '820005';
+  Metadata.Descricao := 'Documento com informações de alienação de bens imóveis, mas com tributação realizada por outro meio,, observado o art. 254 da Lei Complementar nº 214, de 2025.';
+  Metadata.ArtigoLei := 'Art. 254, § 1º';
+  Metadata.TipoTributacao := '';
+  Metadata.TomadorEspecifico := '';
+  Metadata.ExigeNBSouNCM := False;
+  Metadata.SemNBScomCodServico := False;
+  Metadata.TributacaoNFSe := '';
+  Metadata.OutroCampoNFSe := '';
+  Metadata.Observacao := 'Art. 254. Considera-se ocorrido o fato gerador do IBS e da CBS:  I - na alienação de bem imóvel, no momento do ato de alienação;  § 1º Para fins do disposto no inciso I do caput deste artigo, considera-se alienação a adjudicação, a celebração, inclusive de quaisquer ajustes posteriores, do contrato de alienação, ainda que mediante instrumento de promessa, carta de reserva com princípio de pagamento ou qualquer outro documento representativo de compromisso, ou quando implementada a condição suspensiva a que estiver sujeita a alienação.';
+  Metadata.PercentualReducaoAliquota := 0;
+  Metadata.TributosRelacionados := '';
+  Metadata.DataInicioVigencia := 0;
+  Metadata.DataFimVigencia := 0;
+  Metadata.TituloCapitulo := '';
+  Metadata.CreditoAnterior := '';
+  Metadata.CreditoParaFrente := '';
+  AddClassTribMetadata(Metadata);
+
+end;
+
+end.

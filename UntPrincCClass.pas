@@ -1,28 +1,63 @@
-unit UntPrincCClass;
+ï»¿unit UntPrincCClass;
 
 interface
 
 uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes, Vcl.Graphics,
-  Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.StdCtrls, ReformaTributaria.ClassTrib;
+  Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.StdCtrls, ReformaTributaria.ClassTrib,system.Math,
+  Vcl.ExtCtrls, Vcl.ComCtrls;
 
 type
   TForm8 = class(TForm)
-    cboCST: TComboBox;
-    cboCClassTrib: TComboBox;
-    mLog: TMemo;
+    PageControl1: TPageControl;
+    TabSheet1: TTabSheet;
+    TabSheet2: TTabSheet;
     lblCST: TLabel;
     lblCClassTrib: TLabel;
     lblDescricao: TLabel;
+    cboCST: TComboBox;
+    cboCClassTrib: TComboBox;
+    mLog: TMemo;
+    edtCodigo: TEdit;
+    edtCST: TEdit;
+    edtArtigoLei: TEdit;
+    edtTipoTributacao: TEdit;
+    edtTomador: TEdit;
+    edtPercentual: TEdit;
+    edtInicioVig: TEdit;
+    edtFimVig: TEdit;
+    Label1: TLabel;
+    Label2: TLabel;
+    Label3: TLabel;
+    Label4: TLabel;
+    Label5: TLabel;
+    Label6: TLabel;
+    Label7: TLabel;
+    Label8: TLabel;
+    Panel1: TPanel;
+    cboICMS: TComboBox;
+    Label9: TLabel;
+    cboCSOSN: TComboBox;
+    Label10: TLabel;
+    cboPISCOFINS: TComboBox;
+    Label11: TLabel;
+    Panel2: TPanel;
+    Panel3: TPanel;
+    Panel4: TPanel;
+    lblPISResultado: TLabel;
+    lblCSOSNResultado: TLabel;
+    lblICMSResultado: TLabel;
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure cboCSTChange(Sender: TObject);
     procedure cboCClassTribChange(Sender: TObject);
+    procedure cboICMSClick(Sender: TObject);
   private
-    FCSTService: TCSTClassTribService;
+    FCSTService: IClassTribRepository;
     procedure CarregarCSTs;
     procedure CarregarClassTribPorCST(const CST: string);
     procedure ExibirDescricaoClassTrib(const CodClassTrib: string);
+    procedure btnConsultarCorrelacaoClick(Sender: TObject);
   public
     { Public declarations }
   end;
@@ -36,9 +71,8 @@ implementation
 
 procedure TForm8.FormCreate(Sender: TObject);
 begin
-  FCSTService := TCSTClassTribService.Create;
+  FCSTService := TClassTribService.CreateDefault;
 
-  // Adicionar rótulos caso não existam no DFM
   if not Assigned(lblCST) then
   begin
     lblCST := TLabel.Create(Self);
@@ -52,7 +86,7 @@ begin
   begin
     lblCClassTrib := TLabel.Create(Self);
     lblCClassTrib.Parent := Self;
-    lblCClassTrib.Caption := 'Código de Classificação Tributária:';
+    lblCClassTrib.Caption := 'CÃ³digo de ClassificaÃ§Ã£o TributÃ¡ria:';
     lblCClassTrib.Left := cboCClassTrib.Left;
     lblCClassTrib.Top := cboCClassTrib.Top - 20;
   end;
@@ -61,22 +95,84 @@ begin
   begin
     lblDescricao := TLabel.Create(Self);
     lblDescricao.Parent := Self;
-    lblDescricao.Caption := 'Descrição:';
+    lblDescricao.Caption := 'DescriÃ§Ã£o:';
     lblDescricao.Left := mLog.Left;
     lblDescricao.Top := mLog.Top - 20;
   end;
 
-  // Carregar os CSTs no ComboBox
   CarregarCSTs;
 
-  // Configurar eventos de alteração
   cboCST.OnChange := cboCSTChange;
   cboCClassTrib.OnChange := cboCClassTribChange;
+
+
+  // Preencher cboICMS no TabSheet2
+  cboICMS.Items.Clear;
+  cboICMS.Items.AddStrings(['00', '10', '20', '30', '40', '41', '50', '51', '60', '70', '90']);
+  cboICMS.Text := 'Selecione ICMS';
+
+  // Preencher cboCSOSN no TabSheet2
+  cboCSOSN.Items.Clear;
+  cboCSOSN.Items.AddStrings(['101', '102', '103', '201', '202', '203', '300', '400', '500', '900']);
+  cboCSOSN.Text := 'Selecione CSOSN';
+
+  // Preencher cboPISCOFINS no TabSheet2
+  cboPISCOFINS.Items.Clear;
+  cboPISCOFINS.Items.AddStrings(['01', '02', '03', '04', '05', '06', '07', '08', '09', '49', '50', '51', '52', '60', '70', '98', '99']);
+  cboPISCOFINS.Text := 'Selecione PIS/COFINS';
 end;
+
+procedure TForm8.btnConsultarCorrelacaoClick(Sender: TObject);
+var
+  ResultadoICMS, ResultadoCSOSN, ResultadoPIS: TConversionResult;
+begin
+  // ObtÃ©m os dados completos da conversÃ£o
+  ResultadoICMS  := FCSTService.ObterDadosConversaoIBS(tpmodCST, cboICMS.Text);
+  ResultadoCSOSN := FCSTService.ObterDadosConversaoIBS(tpmodCSOSN, cboCSOSN.Text);
+  ResultadoPIS   := FCSTService.ObterDadosConversaoIBS(tpmodCSTPisCofins, cboPISCOFINS.Text);
+
+  // Exibe os resultados ICMS
+if ResultadoICMS.Codigo <> '' then
+begin
+  lblICMSResultado.Caption := Format('CST IBS â†’ %s', [ResultadoICMS.CSTResult]) + sLineBreak +
+                             Format('CClassTrib â†’ %s ', [ResultadoICMS.Codigo]) + sLineBreak + sLineBreak +
+                             Format('DescriÃ§Ã£o â†’ %s', [ResultadoICMS.Descricao]);
+end
+else
+  lblICMSResultado.Caption := 'CST IBS â†’ Sem correspondÃªncia' + sLineBreak +
+                             'CClassTrib â†’ N/A' + sLineBreak +
+                             'DescriÃ§Ã£o â†’ N/A';
+
+// Exibe os resultados CSOSN
+if ResultadoCSOSN.Codigo <> '' then
+begin
+  lblCSOSNResultado.Caption := Format('CST IBS â†’ %s', [ResultadoCSOSN.CSTResult]) + sLineBreak +
+                              Format('CClassTrib â†’ %s ', [ResultadoCSOSN.Codigo]) + sLineBreak + sLineBreak +
+                              Format('DescriÃ§Ã£o â†’ %s', [ResultadoCSOSN.Descricao]);
+end
+else
+  lblCSOSNResultado.Caption := 'CST IBS â†’ Sem correspondÃªncia' + sLineBreak +
+                              'CClassTrib â†’ N/A' + sLineBreak +
+                              'DescriÃ§Ã£o â†’ N/A';
+
+// Exibe os resultados PIS/COFINS
+if ResultadoPIS.Codigo <> '' then
+begin
+  lblPISResultado.Caption := Format('CST CBS â†’ %s', [ResultadoPIS.CSTResult]) + sLineBreak +
+                            Format('CClassTrib â†’ %s ', [ResultadoPIS.Codigo]) + sLineBreak + sLineBreak +
+                            Format('DescriÃ§Ã£o â†’ %s', [ResultadoPIS.Descricao]);
+end
+else
+  lblPISResultado.Caption := 'CST CBS â†’ Sem correspondÃªncia' + sLineBreak +
+                            'CClassTrib â†’ N/A' + sLineBreak +
+                            'DescriÃ§Ã£o â†’ N/A';
+end;
+
+
 
 procedure TForm8.FormDestroy(Sender: TObject);
 begin
-  FCSTService.Free;
+  FCSTService := nil;
 end;
 
 procedure TForm8.CarregarCSTs;
@@ -86,66 +182,96 @@ var
 begin
   cboCST.Items.Clear;
   cboCST.Text := '';
-  CSTs := FCSTService.ListarCSTDisponiveis;
+  CSTs := FCSTService.GetAllCSTs;
   for CST in CSTs do
   begin
     case CST.ToInteger of
-      0: cboCST.Items.Add(Format('%s - Tributação Normal', [CST]));
-      10: cboCST.Items.Add(Format('%s - Tributação com alíquotas uniformes - operações setor financeiro', [CST]));
-      11: cboCST.Items.Add(Format('%s - Tributação com alíquotas uniformes reduzidas', [CST]));
-      200: cboCST.Items.Add(Format('%s - Alíquota Zero', [CST]));
-      210: cboCST.Items.Add(Format('%s - Alíquota reduzida com redutor de base de cálculo', [CST]));
-      220: cboCST.Items.Add(Format('%s - Alíquota fixa', [CST]));
-      221: cboCST.Items.Add(Format('%s - Alíquota fixa proporcional', [CST]));
-      400: cboCST.Items.Add(Format('%s - Isenção', [CST]));
-      410: cboCST.Items.Add(Format('%s - Imunidade e não incidência', [CST]));
+      0: cboCST.Items.Add(Format('%s - TributaÃ§Ã£o Normal', [CST]));
+      10: cboCST.Items.Add(Format('%s - TributaÃ§Ã£o com alÃ­quotas uniformes - operaÃ§Ãµes setor financeiro', [CST]));
+      11: cboCST.Items.Add(Format('%s - TributaÃ§Ã£o com alÃ­quotas uniformes reduzidas', [CST]));
+      200: cboCST.Items.Add(Format('%s - AlÃ­quota Zero', [CST]));
+      210: cboCST.Items.Add(Format('%s - AlÃ­quota reduzida com redutor de base de cÃ¡lculo', [CST]));
+      220: cboCST.Items.Add(Format('%s - AlÃ­quota fixa', [CST]));
+      221: cboCST.Items.Add(Format('%s - AlÃ­quota fixa proporcional', [CST]));
+      400: cboCST.Items.Add(Format('%s - IsenÃ§Ã£o', [CST]));
+      410: cboCST.Items.Add(Format('%s - Imunidade e nÃ£o incidÃªncia', [CST]));
       510: cboCST.Items.Add(Format('%s - Diferimento', [CST]));
-      550: cboCST.Items.Add(Format('%s - Suspensão', [CST]));
-      620: cboCST.Items.Add(Format('%s - Tributação Monofásica', [CST]));
-      800: cboCST.Items.Add(Format('%s - Transferência de Créditos', [CST]));
+      550: cboCST.Items.Add(Format('%s - SuspensÃ£o', [CST]));
+      620: cboCST.Items.Add(Format('%s - TributaÃ§Ã£o MonofÃ¡sica', [CST]));
+      800: cboCST.Items.Add(Format('%s - TransferÃªncia de CrÃ©ditos', [CST]));
       810: cboCST.Items.Add(Format('%s - Ajustes', [CST]));
-      820: cboCST.Items.Add(Format('%s - Tributação em declaração de regime específico', [CST]));
+      820: cboCST.Items.Add(Format('%s - TributaÃ§Ã£o em declaraÃ§Ã£o de regime especÃ­fico', [CST]));
       900: cboCST.Items.Add(Format('%s - Outros', [CST]));
     else
       cboCST.Items.Add(CST);
     end;
   end;
-  // Limpar o segundo ComboBox
   cboCClassTrib.Items.Clear;
   cboCClassTrib.Text := '';
-  // Limpar o Memo
   mLog.Clear;
 end;
 
 procedure TForm8.CarregarClassTribPorCST(const CST: string);
 var
-  CodigosClassTrib: TArray<TCodigoClassTrib>;
-  Codigo: TCodigoClassTrib;
+  CodigosClassTrib: TArray<TClassTribMetadata>;
+  Codigo: TClassTribMetadata;
 begin
   cboCClassTrib.Items.Clear;
   cboCClassTrib.Text := '';
 
-  CodigosClassTrib := FCSTService.ObterClassTribPorCST(CST);
+  CodigosClassTrib := FCSTService.GetByCST(CST);
 
   for Codigo in CodigosClassTrib do
     cboCClassTrib.Items.Add(Format('%s - %s', [Codigo.Codigo, Codigo.Descricao]));
 
-  // Limpar o Memo
   mLog.Clear;
 end;
 
 procedure TForm8.ExibirDescricaoClassTrib(const CodClassTrib: string);
 var
-  Descricao: string;
+  Metadata: TClassTribMetadata;
 begin
-  mLog.Clear;
+  Metadata := FCSTService.GetByCodigo(CodClassTrib);
 
-  Descricao := FCSTService.ObterDescricaoClassTrib(CodClassTrib);
-
-  if Descricao <> '' then
+  if Metadata.Codigo <> '' then
   begin
-    mLog.Lines.Add('Código: ' + CodClassTrib);
-    mLog.Lines.Add('Descrição: ' + Descricao);
+    // Preenche os edits
+    edtCodigo.Text := Metadata.Codigo;
+    edtCST.Text := Metadata.CST;
+    edtArtigoLei.Text := Metadata.ArtigoLei;
+    edtTipoTributacao.Text := Metadata.TipoTributacao;
+    edtTomador.Text := Metadata.TomadorEspecifico;
+    edtPercentual.Text := FloatToStr(Metadata.PercentualReducaoAliquota);
+    edtInicioVig.Text := DateToStr(Metadata.DataInicioVigencia);
+
+    if Metadata.DataFimVigencia <> 0 then
+      edtFimVig.Text := DateToStr(Metadata.DataFimVigencia)
+    else
+      edtFimVig.Text := 'Indeterminado';
+
+    // Preenche memo apenas para conteÃºdos grandes
+    mLog.Clear;
+    mLog.Lines.Add('DescriÃ§Ã£o:');
+    mLog.Lines.Add(Metadata.Descricao);
+    mLog.Lines.Add('');
+    mLog.Lines.Add('ObservaÃ§Ã£o:');
+    mLog.Lines.Add(Metadata.Observacao);
+    mLog.Lines.Add('');
+    mLog.Lines.Add('TÃ­tulo CapÃ­tulo:');
+    mLog.Lines.Add(Metadata.TituloCapitulo);
+  end
+  else
+  begin
+    edtCodigo.Text := '';
+    edtCST.Text := '';
+    edtArtigoLei.Text := '';
+    edtTipoTributacao.Text := '';
+    edtTomador.Text := '';
+    edtPercentual.Text := '';
+    edtInicioVig.Text := '';
+    edtFimVig.Text := '';
+    mLog.Clear;
+    mLog.Lines.Add('CÃ³digo nÃ£o encontrado.');
   end;
 end;
 
@@ -156,16 +282,19 @@ var
 begin
   if cboCST.ItemIndex >= 0 then
   begin
-    // Extrair o CST do item selecionado (apenas os dígitos antes do traço)
     PosTraco := Pos(' - ', cboCST.Text);
     if PosTraco > 0 then
       CST := Copy(cboCST.Text, 1, PosTraco - 1)
     else
       CST := cboCST.Text;
 
-    // Preencher o ComboBox de Classificação Tributária
     CarregarClassTribPorCST(CST);
   end;
+end;
+
+procedure TForm8.cboICMSClick(Sender: TObject);
+begin
+      btnConsultarCorrelacaoClick(sender);
 end;
 
 procedure TForm8.cboCClassTribChange(Sender: TObject);
@@ -175,16 +304,15 @@ var
 begin
   if cboCClassTrib.ItemIndex >= 0 then
   begin
-    // Extrair o código de classificação do item selecionado (apenas os dígitos antes do traço)
     PosTraco := Pos(' - ', cboCClassTrib.Text);
     if PosTraco > 0 then
       CodClassTrib := Copy(cboCClassTrib.Text, 1, PosTraco - 1)
     else
       CodClassTrib := cboCClassTrib.Text;
 
-    // Exibir a descrição
     ExibirDescricaoClassTrib(CodClassTrib);
   end;
 end;
 
 end.
+
